@@ -2,6 +2,8 @@
 
 A JUCE-based visual layout editor and MIDI controller for the **Erae Touch II** playing surface. Design custom touch layouts with shapes, colors, and behaviors, then send them directly to the Erae hardware over USB.
 
+![Erae Shape Editor](docs/screenshot.png)
+
 ## What It Does
 
 - **Visual Layout Editor** - Design touch-sensitive zones on a 42x24 grid that maps 1:1 to the Erae Touch II LED surface
