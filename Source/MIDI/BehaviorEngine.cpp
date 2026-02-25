@@ -111,14 +111,19 @@ void BehaviorEngine::handleMomentary(const FingerEvent& event, Shape* shape, Fin
 void BehaviorEngine::handleNotePad(const FingerEvent& event, Shape* shape, FingerState& fs)
 {
     int note = getParam(*shape, "note", 60);
+    int slideCC = getParam(*shape, "slide_cc", 74); // MPE Y-axis: CC 74 (brightness/timbre)
 
     if (event.action == SysEx::ACTION_DOWN) {
         int ch = mpe_.allocate(fs.fingerId);
         midi_.pitchBend(ch, 8192);
+        // Send initial Y-slide and pressure
+        auto [nx, ny] = normalizeInShape(fs.x, fs.y, *shape);
+        midi_.cc(ch, slideCC, (int)(ny * 127.0f));
         midi_.noteOn(ch, note, zToVelocity(fs.z));
     } else if (event.action == SysEx::ACTION_MOVE) {
         int ch = mpe_.getChannel(fs.fingerId);
         if (ch < 0) return;
+        // Pitch bend from X-slide (relative to touch-down position)
         auto b = shape->bbox();
         float shapeW = b.xMax - b.xMin;
         if (shapeW > 0) {
@@ -126,6 +131,10 @@ void BehaviorEngine::handleNotePad(const FingerEvent& event, Shape* shape, Finge
             int pb = juce::jlimit(0, 16383, (int)(8192 + dxNorm * 8191.0f));
             midi_.pitchBend(ch, pb);
         }
+        // Y-slide as CC (absolute position within shape)
+        auto [nx, ny] = normalizeInShape(fs.x, fs.y, *shape);
+        midi_.cc(ch, slideCC, (int)(ny * 127.0f));
+        // Pressure (Z)
         midi_.pressure(ch, zToPressure(fs.z));
     } else if (event.action == SysEx::ACTION_UP) {
         int ch = mpe_.getChannel(fs.fingerId);

@@ -88,6 +88,13 @@ PropertyPanel::PropertyPanel()
     addAndMakeVisible(horizLabel_);
     addAndMakeVisible(horizToggle_);
 
+    // Slide CC slider (0-127, default 74 for MPE Y-axis)
+    styleLabel(slideCCLabel_);
+    styleSlider(slideCCSlider_, 0, 127, 74);
+    slideCCSlider_.addListener(this);
+    addAndMakeVisible(slideCCLabel_);
+    addAndMakeVisible(slideCCSlider_);
+
     // MPE hint
     mpeHint_.setFont(juce::Font(Theme::FontSmall, juce::Font::italic));
     mpeHint_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
@@ -162,6 +169,7 @@ void PropertyPanel::resized()
     layoutRow(ccLabel_, ccSlider_);
     layoutRow(ccXLabel_, ccXSlider_);
     layoutRow(ccYLabel_, ccYSlider_);
+    layoutRow(slideCCLabel_, slideCCSlider_);
 
     // Horizontal toggle row
     {
@@ -229,6 +237,7 @@ void PropertyPanel::loadShape(Shape* shape)
     ccSlider_.setValue(getP("cc", 1), juce::dontSendNotification);
     ccXSlider_.setValue(getP("cc_x", 1), juce::dontSendNotification);
     ccYSlider_.setValue(getP("cc_y", 2), juce::dontSendNotification);
+    slideCCSlider_.setValue(getP("slide_cc", 74), juce::dontSendNotification);
     horizToggle_.setToggleState(getPBool("horizontal", false), juce::dontSendNotification);
 
     // Visual style
@@ -323,6 +332,7 @@ void PropertyPanel::updateVisibility()
     bool showCC       = (btype == BehaviorType::Fader);
     bool showCCXY     = (btype == BehaviorType::XYController);
     bool showHoriz    = (btype == BehaviorType::Fader);
+    bool showSlideCC  = (btype == BehaviorType::NotePad);
     bool showMPEHint  = (btype == BehaviorType::NotePad);
 
     noteLabel_.setVisible(showNote);
@@ -339,6 +349,8 @@ void PropertyPanel::updateVisibility()
     ccYSlider_.setVisible(showCCXY);
     horizLabel_.setVisible(showHoriz);
     horizToggle_.setVisible(showHoriz);
+    slideCCLabel_.setVisible(showSlideCC);
+    slideCCSlider_.setVisible(showSlideCC);
     mpeHint_.setVisible(showMPEHint);
 
     // Visual style controls — always visible when a shape is selected
@@ -371,6 +383,7 @@ void PropertyPanel::writeParamsToShape()
             break;
         case BehaviorType::NotePad:
             obj->setProperty("note", (int)noteSlider_.getValue());
+            obj->setProperty("slide_cc", (int)slideCCSlider_.getValue());
             // No channel — MPE allocates dynamically via MPEAllocator
             break;
         case BehaviorType::XYController:

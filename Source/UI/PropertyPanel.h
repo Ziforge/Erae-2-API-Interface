@@ -61,8 +61,10 @@ private:
     juce::Slider ccYSlider_;
     juce::Label horizLabel_     {"", "Horizontal"};
     juce::ToggleButton horizToggle_;
+    juce::Label slideCCLabel_   {"", "Slide CC"};
+    juce::Slider slideCCSlider_;
 
-    juce::Label mpeHint_        {"", "(MPE: per-finger channel)"};
+    juce::Label mpeHint_        {"", "(MPE: pitch-X, slide-Y, pressure-Z)"};
 
     // Visual style controls
     juce::Label visualLabel_    {"", "VISUAL"};
