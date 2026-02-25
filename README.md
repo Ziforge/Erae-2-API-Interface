@@ -1,8 +1,10 @@
 # Erae 2 API Interface
 
+> **Work in Progress** - This project is under active development. Features may change and contributions are welcome.
+
 A JUCE-based visual layout editor and MIDI controller for the **Erae Touch II** playing surface. Design custom touch layouts with shapes, colors, and behaviors, then send them directly to the Erae hardware over USB.
 
-![Erae Shape Editor](docs/screenshot.png)
+![Erae Shape Editor - 10-finger multitouch with pressure glow](docs/screenshot.png)
 
 ## What It Does
 
