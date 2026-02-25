@@ -70,4 +70,4 @@ Layouts are saved as JSON files compatible with the Python `erae_shapes` format.
 
 ## License
 
-MIT
+[CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/) - Free for non-commercial use with attribution.
