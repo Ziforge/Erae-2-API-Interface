@@ -2,11 +2,15 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "Model/Layout.h"
+#include "Model/MultiPageLayout.h"
+#include "Core/UndoManager.h"
 #include "Erae/EraeConnection.h"
 #include "Erae/EraeRenderer.h"
 #include "MIDI/EraeMidiOut.h"
 #include "MIDI/MPEAllocator.h"
 #include "MIDI/BehaviorEngine.h"
+#include "MIDI/OscOutput.h"
+#include "MIDI/DawFeedback.h"
 #include "Rendering/WidgetRenderer.h"
 #include <map>
 
@@ -41,9 +45,16 @@ public:
     void getStateInformation(juce::MemoryBlock& destData) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
 
-    Layout& getLayout() { return layout_; }
+    Layout& getLayout() { return multiLayout_.currentPage(); }
+    MultiPageLayout& getMultiLayout() { return multiLayout_; }
+    UndoManager& getUndoManager() { return undoManager_; }
     EraeConnection& getConnection() { return connection_; }
     EraeRenderer& getRenderer() { return renderer_; }
+    OscOutput& getOscOutput() { return oscOutput_; }
+    DawFeedback& getDawFeedback() { return dawFeedback_; }
+
+    bool getPerFingerColors() const { return perFingerColors_; }
+    void setPerFingerColors(bool en) { perFingerColors_ = en; }
 
     // EraeConnection::Listener
     void fingerEvent(const FingerEvent& event) override;
@@ -57,12 +68,17 @@ public:
     std::map<std::string, WidgetState> getShapeWidgetStates() const;
 
 private:
-    Layout layout_;
+    MultiPageLayout multiLayout_;
+    UndoManager undoManager_;
     EraeConnection connection_;
     EraeMidiOut midiOut_;
     MPEAllocator mpeAllocator_;
     BehaviorEngine behaviorEngine_;
+    OscOutput oscOutput_;
+    DawFeedback dawFeedback_;
     EraeRenderer renderer_;
+
+    bool perFingerColors_ = true;
 
     // Finger → shape capture (finger stays on shape from DOWN through UP)
     std::map<uint64_t, std::string> fingerShapeMap_;

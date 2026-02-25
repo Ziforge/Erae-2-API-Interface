@@ -1,20 +1,33 @@
 #include "GridCanvas.h"
 #include "../Model/Behavior.h"
+#include "../Core/LayoutActions.h"
 #include <cmath>
 #include <algorithm>
 
 namespace erae {
 
-GridCanvas::GridCanvas(Layout& layout) : layout_(layout)
+GridCanvas::GridCanvas(Layout& layout, UndoManager& undoManager, SelectionManager& selectionManager)
+    : layout_(&layout), undoMgr_(undoManager), selMgr_(selectionManager)
 {
-    layout_.addListener(this);
+    layout_->addListener(this);
+    selMgr_.addListener(this);
     setOpaque(true);
     setWantsKeyboardFocus(true);
 }
 
 GridCanvas::~GridCanvas()
 {
-    layout_.removeListener(this);
+    layout_->removeListener(this);
+    selMgr_.removeListener(this);
+}
+
+void GridCanvas::setLayout(Layout& newLayout)
+{
+    layout_->removeListener(this);
+    layout_ = &newLayout;
+    layout_->addListener(this);
+    selMgr_.clear();
+    repaint();
 }
 
 // ============================================================
@@ -39,63 +52,80 @@ void GridCanvas::setToolMode(ToolMode mode)
 }
 
 // ============================================================
-// Selection
+// Selection (delegates to SelectionManager)
 // ============================================================
 
 void GridCanvas::setSelectedId(const std::string& id)
 {
-    if (selectedId_ != id) {
-        selectedId_ = id;
-        for (auto* l : canvasListeners_)
-            l->selectionChanged(id);
-        repaint();
-    }
+    if (id.empty())
+        selMgr_.clear();
+    else
+        selMgr_.select(id);
+}
+
+void GridCanvas::selectionChanged()
+{
+    for (auto* l : canvasListeners_)
+        l->selectionChanged();
+    repaint();
 }
 
 void GridCanvas::deleteSelected()
 {
-    if (!selectedId_.empty()) {
-        layout_.removeShape(selectedId_);
-        selectedId_.clear();
-        for (auto* l : canvasListeners_)
-            l->selectionChanged("");
+    auto& ids = selMgr_.getSelectedIds();
+    if (ids.empty()) return;
+
+    if (ids.size() == 1) {
+        undoMgr_.perform(std::make_unique<RemoveShapeAction>(*layout_, *ids.begin()));
+    } else {
+        undoMgr_.perform(std::make_unique<RemoveMultipleAction>(*layout_, ids));
     }
+    selMgr_.clear();
 }
 
 void GridCanvas::duplicateSelected()
 {
-    if (selectedId_.empty()) return;
-    auto* s = layout_.getShape(selectedId_);
-    if (!s) return;
+    auto& ids = selMgr_.getSelectedIds();
+    if (ids.empty()) return;
 
-    auto dup = s->clone();
-    dup->id = nextShapeId();
-    dup->x += 1.0f;
-    dup->y += 1.0f;
+    std::set<std::string> newIds;
+    for (auto& id : ids) {
+        auto* s = layout_->getShape(id);
+        if (!s) continue;
 
-    // Auto-assign unique note/CC so duplicates don't clash
-    auto btype = behaviorFromString(dup->behavior);
-    auto* obj = dup->behaviorParams.getDynamicObject();
-    if (obj) {
-        if (btype == BehaviorType::Trigger || btype == BehaviorType::Momentary || btype == BehaviorType::NotePad) {
-            int oldNote = obj->hasProperty("note") ? (int)obj->getProperty("note") : 60;
-            obj->setProperty("note", layout_.nextAvailableNote(oldNote + 1));
+        auto dup = s->clone();
+        dup->id = nextShapeId();
+        dup->x += 1.0f;
+        dup->y += 1.0f;
+
+        // Auto-assign unique note/CC so duplicates don't clash
+        auto btype = behaviorFromString(dup->behavior);
+        auto* obj = dup->behaviorParams.getDynamicObject();
+        if (obj) {
+            if (btype == BehaviorType::Trigger || btype == BehaviorType::Momentary || btype == BehaviorType::NotePad) {
+                int oldNote = obj->hasProperty("note") ? (int)obj->getProperty("note") : 60;
+                obj->setProperty("note", layout_->nextAvailableNote(oldNote + 1));
+            }
+            if (btype == BehaviorType::Fader) {
+                int oldCC = obj->hasProperty("cc") ? (int)obj->getProperty("cc") : 1;
+                obj->setProperty("cc", layout_->nextAvailableCC(oldCC + 1));
+            }
+            if (btype == BehaviorType::XYController) {
+                int oldX = obj->hasProperty("cc_x") ? (int)obj->getProperty("cc_x") : 1;
+                int newX = layout_->nextAvailableCC(oldX + 1);
+                obj->setProperty("cc_x", newX);
+                obj->setProperty("cc_y", layout_->nextAvailableCC(newX + 1));
+            }
         }
-        if (btype == BehaviorType::Fader) {
-            int oldCC = obj->hasProperty("cc") ? (int)obj->getProperty("cc") : 1;
-            obj->setProperty("cc", layout_.nextAvailableCC(oldCC + 1));
-        }
-        if (btype == BehaviorType::XYController) {
-            int oldX = obj->hasProperty("cc_x") ? (int)obj->getProperty("cc_x") : 1;
-            int newX = layout_.nextAvailableCC(oldX + 1);
-            obj->setProperty("cc_x", newX);
-            obj->setProperty("cc_y", layout_.nextAvailableCC(newX + 1));
-        }
+
+        newIds.insert(dup->id);
+        undoMgr_.perform(std::make_unique<AddShapeAction>(*layout_, std::move(dup)));
     }
 
-    auto newId = dup->id;
-    layout_.addShape(std::move(dup));
-    setSelectedId(newId);
+    // Select the duplicated shapes
+    selMgr_.clear();
+    for (auto& id : newIds)
+        selMgr_.addToSelection(id);
 }
 
 std::string GridCanvas::nextShapeId()
@@ -179,7 +209,7 @@ void GridCanvas::paintPixel(int gx, int gy)
     strokeCells_.insert({gx, gy});
 
     auto id = pixelId(gx, gy);
-    if (auto* existing = layout_.getShape(id)) {
+    if (auto* existing = layout_->getShape(id)) {
         existing->color = paintColor_;
         existing->colorActive = brighten(paintColor_);
         repaint();
@@ -190,11 +220,12 @@ void GridCanvas::paintPixel(int gx, int gy)
     shape->colorActive = brighten(paintColor_);
     shape->behavior = "trigger";
     auto* obj = new juce::DynamicObject();
-    obj->setProperty("note", layout_.nextAvailableNote(60));
+    obj->setProperty("note", layout_->nextAvailableNote(60));
     obj->setProperty("channel", 0);
     obj->setProperty("velocity", -1);
     shape->behaviorParams = juce::var(obj);
-    layout_.addShape(std::move(shape));
+    // Paint pixels bypass undo for performance — too many per stroke
+    layout_->addShape(std::move(shape));
 }
 
 void GridCanvas::erasePixel(int gx, int gy)
@@ -202,9 +233,9 @@ void GridCanvas::erasePixel(int gx, int gy)
     if (gx < 0 || gx >= Theme::GridW || gy < 0 || gy >= Theme::GridH) return;
     if (strokeCells_.count({gx, gy})) return;
     strokeCells_.insert({gx, gy});
-    layout_.removeShape(pixelId(gx, gy));
-    if (auto* hit = layout_.hitTest(gx + 0.5f, gy + 0.5f))
-        layout_.removeShape(hit->id);
+    layout_->removeShape(pixelId(gx, gy));
+    if (auto* hit = layout_->hitTest(gx + 0.5f, gy + 0.5f))
+        layout_->removeShape(hit->id);
 }
 
 // ============================================================
@@ -213,7 +244,10 @@ void GridCanvas::erasePixel(int gx, int gy)
 
 juce::Rectangle<float> GridCanvas::selectedBBoxScreen() const
 {
-    auto* s = layout_.getShape(selectedId_);
+    // Use the primary (single) selection for handles
+    auto singleId = selMgr_.getSingleSelectedId();
+    if (singleId.empty()) return {};
+    auto* s = layout_->getShape(singleId);
     if (!s) return {};
     auto b = s->bbox();
     return gridCellToScreen(b.xMin, b.yMin, b.xMax - b.xMin, b.yMax - b.yMin);
@@ -248,7 +282,7 @@ juce::Rectangle<float> GridCanvas::getHandleRect(HandlePos pos) const
 
 HandlePos GridCanvas::hitTestHandle(juce::Point<float> screenPos) const
 {
-    if (selectedId_.empty()) return HandlePos::None;
+    if (selMgr_.count() != 1) return HandlePos::None;
     for (auto hp : allHandles()) {
         if (getHandleRect(hp).expanded(2).contains(screenPos))
             return hp;
@@ -301,14 +335,13 @@ void GridCanvas::finishCreation()
         shape->color = paintColor_;
         shape->colorActive = brighten(paintColor_);
         shape->behavior = "trigger";
-        // Auto-assign unique note so shapes don't clash
         auto* obj = new juce::DynamicObject();
-        obj->setProperty("note", layout_.nextAvailableNote(60));
+        obj->setProperty("note", layout_->nextAvailableNote(60));
         obj->setProperty("channel", 0);
         obj->setProperty("velocity", -1);
         shape->behaviorParams = juce::var(obj);
-        layout_.addShape(std::move(shape));
-        setSelectedId(id);
+        undoMgr_.perform(std::make_unique<AddShapeAction>(*layout_, std::move(shape)));
+        selMgr_.select(id);
     }
     creating_ = false;
 }
@@ -335,7 +368,6 @@ void GridCanvas::drawGrid(juce::Graphics& g)
     float cellPx = Theme::CellSize * zoom_;
     auto fullGrid = gridCellToScreen(0, 0, (float)Theme::GridW, (float)Theme::GridH);
 
-    // Minor grid lines
     for (int gx = 1; gx < Theme::GridW; ++gx) {
         float sx = panOffset_.x + gx * cellPx;
         g.setColour((gx % 6 == 0) ? Theme::Colors::GridMajor : Theme::Colors::GridLine);
@@ -347,14 +379,13 @@ void GridCanvas::drawGrid(juce::Graphics& g)
         g.drawLine(fullGrid.getX(), sy, fullGrid.getRight(), sy, Theme::GridLineWidth);
     }
 
-    // Border
     g.setColour(Theme::Colors::GridBorder);
     g.drawRect(fullGrid, Theme::GridBorderWidth);
 }
 
 void GridCanvas::drawShapes(juce::Graphics& g)
 {
-    for (auto& shape : layout_.shapes())
+    for (auto& shape : layout_->shapes())
         drawShape(g, *shape);
 }
 
@@ -363,21 +394,16 @@ void GridCanvas::drawShape(juce::Graphics& g, const Shape& shape)
     auto col = shape.color.toJuceColour();
     auto style = visualStyleFromString(shape.visualStyle);
 
-    // Check if this shape has an active widget state
     WidgetState wstate;
     auto wit = widgetStates_.find(shape.id);
     if (wit != widgetStates_.end())
         wstate = wit->second;
 
     bool useWidget = (style != VisualStyle::Static);
-    float cellPx = Theme::CellSize * zoom_;
 
-    // Pixel-accurate rendering: draw each grid cell that the shape covers,
-    // exactly matching what the Erae LED hardware will display.
     auto pixels = shape.gridPixels();
 
     if (useWidget) {
-        // Widget rendering: get per-pixel colors from WidgetRenderer
         auto cmds = WidgetRenderer::renderWidget(shape, wstate);
         for (auto& cmd : cmds) {
             auto cellRect = gridCellToScreen((float)cmd.x, (float)cmd.y, 1.0f, 1.0f);
@@ -385,7 +411,6 @@ void GridCanvas::drawShape(juce::Graphics& g, const Shape& shape)
             g.fillRect(cellRect);
         }
     } else {
-        // Static: fill each pixel with shape color
         g.setColour(col);
         for (auto& [px, py] : pixels) {
             auto cellRect = gridCellToScreen((float)px, (float)py, 1.0f, 1.0f);
@@ -393,7 +418,6 @@ void GridCanvas::drawShape(juce::Graphics& g, const Shape& shape)
         }
     }
 
-    // Subtle border around the shape's bounding region of lit pixels
     if (pixels.size() > 1) {
         auto borderCol = col.brighter(0.2f).withAlpha(0.5f);
         g.setColour(borderCol);
@@ -402,12 +426,10 @@ void GridCanvas::drawShape(juce::Graphics& g, const Shape& shape)
         g.drawRect(screenBB, 0.5f);
     }
 
-    // Draw behavior label on shapes large enough to fit text
     auto bb = shape.bbox();
     auto screenBB = gridCellToScreen(bb.xMin, bb.yMin, bb.xMax - bb.xMin, bb.yMax - bb.yMin);
     float minLabelSize = 40.0f;
     if (screenBB.getWidth() > minLabelSize && screenBB.getHeight() > 18.0f) {
-        // Show behavior type abbreviation
         juce::String label;
         auto btype = behaviorFromString(shape.behavior);
         switch (btype) {
@@ -418,7 +440,6 @@ void GridCanvas::drawShape(juce::Graphics& g, const Shape& shape)
             case BehaviorType::Fader:        label = "FAD"; break;
         }
 
-        // Pick text color with good contrast against shape fill
         float lum = col.getFloatRed() * 0.299f + col.getFloatGreen() * 0.587f + col.getFloatBlue() * 0.114f;
         auto textCol = (lum > 0.4f) ? juce::Colour(0x99000000) : juce::Colour(0x99ffffff);
 
@@ -431,16 +452,15 @@ void GridCanvas::drawShape(juce::Graphics& g, const Shape& shape)
 
 void GridCanvas::drawHoverHighlight(juce::Graphics& g)
 {
-    if (hoveredId_.empty() || hoveredId_ == selectedId_) return;
+    if (hoveredId_.empty() || selMgr_.isSelected(hoveredId_)) return;
     if (toolMode_ != ToolMode::Select) return;
 
-    auto* s = layout_.getShape(hoveredId_);
+    auto* s = layout_->getShape(hoveredId_);
     if (!s) return;
 
     auto b = s->bbox();
     auto r = gridCellToScreen(b.xMin, b.yMin, b.xMax - b.xMin, b.yMax - b.yMin);
 
-    // Subtle accent border + glow
     g.setColour(Theme::Colors::AccentGlow);
     g.fillRect(r.expanded(2));
     g.setColour(Theme::Colors::Accent.withAlpha(0.5f));
@@ -455,8 +475,6 @@ void GridCanvas::drawCoordinateReadout(juce::Graphics& g)
     if (gx < 0 || gx >= Theme::GridW || gy < 0 || gy >= Theme::GridH) return;
 
     auto text = juce::String(gx) + ", " + juce::String(gy);
-
-    // Draw in bottom-left corner of canvas
     g.setFont(juce::Font(Theme::FontSmall));
     g.setColour(Theme::Colors::TextDim.withAlpha(0.6f));
     g.drawText(text, 6, getHeight() - 18, 60, 16, juce::Justification::centredLeft, false);
@@ -464,26 +482,31 @@ void GridCanvas::drawCoordinateReadout(juce::Graphics& g)
 
 void GridCanvas::drawSelection(juce::Graphics& g)
 {
-    if (selectedId_.empty()) return;
-    auto* s = layout_.getShape(selectedId_);
-    if (!s) return;
+    auto& ids = selMgr_.getSelectedIds();
+    if (ids.empty()) return;
 
-    // Selection glow (subtle fill behind border)
-    auto r = selectedBBoxScreen();
-    g.setColour(Theme::Colors::SelectionFill);
-    g.fillRect(r);
+    for (auto& id : ids) {
+        auto* s = layout_->getShape(id);
+        if (!s) continue;
 
-    // Selection border
-    g.setColour(Theme::Colors::Selection);
-    g.drawRect(r, 1.5f);
+        auto b = s->bbox();
+        auto r = gridCellToScreen(b.xMin, b.yMin, b.xMax - b.xMin, b.yMax - b.yMin);
 
-    // Handles — rounded, white fill with accent border
-    for (auto hp : allHandles()) {
-        auto hr = getHandleRect(hp);
-        g.setColour(Theme::Colors::HandleFill);
-        g.fillRoundedRectangle(hr, 2.0f);
-        g.setColour(Theme::Colors::HandleBorder);
-        g.drawRoundedRectangle(hr, 2.0f, 1.0f);
+        g.setColour(Theme::Colors::SelectionFill);
+        g.fillRect(r);
+        g.setColour(Theme::Colors::Selection);
+        g.drawRect(r, 1.5f);
+    }
+
+    // Draw handles only for single selection
+    if (ids.size() == 1) {
+        for (auto hp : allHandles()) {
+            auto hr = getHandleRect(hp);
+            g.setColour(Theme::Colors::HandleFill);
+            g.fillRoundedRectangle(hr, 2.0f);
+            g.setColour(Theme::Colors::HandleBorder);
+            g.drawRoundedRectangle(hr, 2.0f, 1.0f);
+        }
     }
 }
 
@@ -500,7 +523,6 @@ void GridCanvas::drawCreationPreview(juce::Graphics& g)
     auto col = paintColor_.toJuceColour().withAlpha(0.35f);
     auto borderCol = Theme::Colors::Accent.withAlpha(0.9f);
 
-    // Create a temporary shape to get pixel-accurate preview
     std::unique_ptr<Shape> tempShape;
     switch (toolMode_) {
         case ToolMode::DrawRect: {
@@ -533,7 +555,6 @@ void GridCanvas::drawCreationPreview(juce::Graphics& g)
             auto cellRect = gridCellToScreen((float)px, (float)py, 1.0f, 1.0f);
             g.fillRect(cellRect);
         }
-        // Border around the pixel extent
         g.setColour(borderCol);
         auto bb = tempShape->bbox();
         auto screenBB = gridCellToScreen(bb.xMin, bb.yMin, bb.xMax - bb.xMin, bb.yMax - bb.yMin);
@@ -592,7 +613,7 @@ void GridCanvas::mouseDown(const juce::MouseEvent& e)
 
     // Middle-click or Ctrl+click: pan (any tool)
     if (e.mods.isMiddleButtonDown() ||
-        (e.mods.isLeftButtonDown() && e.mods.isCtrlDown())) {
+        (e.mods.isLeftButtonDown() && e.mods.isCtrlDown() && !e.mods.isShiftDown())) {
         panning_ = true;
         panStart_ = e.position;
         panOffsetStart_ = panOffset_;
@@ -605,34 +626,57 @@ void GridCanvas::mouseDown(const juce::MouseEvent& e)
         switch (toolMode_) {
             // ---- SELECT ----
             case ToolMode::Select: {
-                // Check if clicking a resize handle
-                auto hp = hitTestHandle(e.position);
-                if (hp != HandlePos::None) {
-                    draggingHandle_ = hp;
-                    dragStartGrid_ = gridPos;
-                    auto* s = layout_.getShape(selectedId_);
-                    if (s) {
-                        auto b = s->bbox();
-                        dragStartX_ = b.xMin; dragStartY_ = b.yMin;
-                        dragStartW_ = b.xMax - b.xMin; dragStartH_ = b.yMax - b.yMin;
-                        if (s->type == ShapeType::Circle)
-                            dragStartR_ = static_cast<CircleShape*>(s)->radius;
-                        else if (s->type == ShapeType::Hex)
-                            dragStartR_ = static_cast<HexShape*>(s)->radius;
+                // Check if clicking a resize handle (single selection only)
+                if (selMgr_.count() == 1) {
+                    auto hp = hitTestHandle(e.position);
+                    if (hp != HandlePos::None) {
+                        draggingHandle_ = hp;
+                        dragStartGrid_ = gridPos;
+                        currentDragId_ = ++dragIdCounter_;
+                        auto singleId = selMgr_.getSingleSelectedId();
+                        auto* s = layout_->getShape(singleId);
+                        if (s) {
+                            auto b = s->bbox();
+                            dragStartX_ = b.xMin; dragStartY_ = b.yMin;
+                            dragStartW_ = b.xMax - b.xMin; dragStartH_ = b.yMax - b.yMin;
+                            if (s->type == ShapeType::Circle)
+                                dragStartR_ = static_cast<CircleShape*>(s)->radius;
+                            else if (s->type == ShapeType::Hex)
+                                dragStartR_ = static_cast<HexShape*>(s)->radius;
+                        }
+                        return;
                     }
-                    return;
                 }
 
                 // Check if clicking on a shape
-                auto* hit = layout_.hitTest(gridPos.x, gridPos.y);
+                auto* hit = layout_->hitTest(gridPos.x, gridPos.y);
                 if (hit) {
-                    setSelectedId(hit->id);
+                    if (e.mods.isShiftDown()) {
+                        // Shift+click: toggle in multi-selection
+                        selMgr_.toggleSelection(hit->id);
+                    } else if (!selMgr_.isSelected(hit->id)) {
+                        // Click on unselected shape: select it alone
+                        selMgr_.select(hit->id);
+                    }
+                    // Start drag for all selected
                     draggingShape_ = true;
                     dragStartGrid_ = gridPos;
-                    dragStartX_ = hit->x;
-                    dragStartY_ = hit->y;
+                    currentDragId_ = ++dragIdCounter_;
+
+                    // Record origins for all selected shapes
+                    dragOrigins_.clear();
+                    for (auto& id : selMgr_.getSelectedIds()) {
+                        auto* s = layout_->getShape(id);
+                        if (s) dragOrigins_[id] = {s->x, s->y};
+                    }
+                    // For single-selection handle compat
+                    if (selMgr_.count() == 1) {
+                        auto* s = layout_->getShape(selMgr_.getSingleSelectedId());
+                        if (s) { dragStartX_ = s->x; dragStartY_ = s->y; }
+                    }
                 } else {
-                    setSelectedId("");
+                    if (!e.mods.isShiftDown())
+                        selMgr_.clear();
                 }
                 break;
             }
@@ -678,9 +722,10 @@ void GridCanvas::mouseDrag(const juce::MouseEvent& e)
     auto gridPos = screenToGrid(e.position);
     cursorGrid_ = gridPos;
 
-    // Handle resize drag
-    if (draggingHandle_ != HandlePos::None && !selectedId_.empty()) {
-        auto* s = layout_.getShape(selectedId_);
+    // Handle resize drag (single selection only)
+    if (draggingHandle_ != HandlePos::None && selMgr_.count() == 1) {
+        auto singleId = selMgr_.getSingleSelectedId();
+        auto* s = layout_->getShape(singleId);
         if (!s) return;
 
         float dx = gridPos.x - dragStartGrid_.x;
@@ -701,36 +746,50 @@ void GridCanvas::mouseDrag(const juce::MouseEvent& e)
                 case HandlePos::Left:        nx += dx; nw -= dx; break;
                 default: break;
             }
-            // Enforce minimum size
             if (nw < 1.0f) { nw = 1.0f; }
             if (nh < 1.0f) { nh = 1.0f; }
-            layout_.resizeRect(selectedId_, snapToGrid(nx), snapToGrid(ny),
-                              snapToGrid(nw), snapToGrid(nh));
+            undoMgr_.perform(std::make_unique<ResizeRectAction>(
+                *layout_, singleId, snapToGrid(nx), snapToGrid(ny),
+                snapToGrid(nw), snapToGrid(nh), currentDragId_));
         }
         else if (s->type == ShapeType::Circle) {
             float dist = std::sqrt(dx * dx + dy * dy);
-            // Grow or shrink based on drag direction from center
             float newR = dragStartR_ + dist * ((dx + dy > 0) ? 1.0f : -1.0f);
             newR = std::max(0.5f, snapToGrid(newR * 2.0f) / 2.0f);
-            layout_.resizeCircle(selectedId_, s->x, s->y, newR);
+            undoMgr_.perform(std::make_unique<ResizeCircleAction>(
+                *layout_, singleId, s->x, s->y, newR, currentDragId_));
         }
         else if (s->type == ShapeType::Hex) {
             float dist = std::sqrt(dx * dx + dy * dy);
             float newR = dragStartR_ + dist * ((dx + dy > 0) ? 1.0f : -1.0f);
             newR = std::max(0.5f, snapToGrid(newR * 2.0f) / 2.0f);
-            layout_.resizeHex(selectedId_, s->x, s->y, newR);
+            undoMgr_.perform(std::make_unique<ResizeHexAction>(
+                *layout_, singleId, s->x, s->y, newR, currentDragId_));
         }
         repaint();
         return;
     }
 
-    // Shape drag (move)
-    if (draggingShape_ && !selectedId_.empty()) {
+    // Shape drag (move) — applies to all selected shapes
+    if (draggingShape_ && !selMgr_.isEmpty()) {
         float dx = gridPos.x - dragStartGrid_.x;
         float dy = gridPos.y - dragStartGrid_.y;
-        float newX = snapToGrid(dragStartX_ + dx);
-        float newY = snapToGrid(dragStartY_ + dy);
-        layout_.moveShape(selectedId_, newX, newY);
+
+        if (selMgr_.count() == 1) {
+            auto singleId = selMgr_.getSingleSelectedId();
+            float newX = snapToGrid(dragOrigins_[singleId].x + dx);
+            float newY = snapToGrid(dragOrigins_[singleId].y + dy);
+            undoMgr_.perform(std::make_unique<MoveShapeAction>(
+                *layout_, singleId, newX, newY, currentDragId_));
+        } else {
+            std::vector<MoveMultipleAction::ShapePos> moves;
+            for (auto& [id, origin] : dragOrigins_) {
+                float newX = snapToGrid(origin.x + dx);
+                float newY = snapToGrid(origin.y + dy);
+                moves.push_back({id, origin.x, origin.y, newX, newY});
+            }
+            undoMgr_.perform(std::make_unique<MoveMultipleAction>(*layout_, std::move(moves), currentDragId_));
+        }
         return;
     }
 
@@ -758,6 +817,7 @@ void GridCanvas::mouseUp(const juce::MouseEvent&)
     draggingShape_ = false;
     draggingHandle_ = HandlePos::None;
     strokeCells_.clear();
+    dragOrigins_.clear();
 
     if (creating_)
         finishCreation();
@@ -767,17 +827,15 @@ void GridCanvas::mouseMove(const juce::MouseEvent& e)
 {
     cursorGrid_ = screenToGrid(e.position);
 
-    // Track hovered shape for highlight
     if (toolMode_ == ToolMode::Select) {
-        auto* hit = layout_.hitTest(cursorGrid_.x, cursorGrid_.y);
+        auto* hit = layout_->hitTest(cursorGrid_.x, cursorGrid_.y);
         auto newHovered = hit ? hit->id : std::string();
         if (newHovered != hoveredId_) {
             hoveredId_ = newHovered;
             repaint();
         }
 
-        // Update cursor for handles
-        if (!selectedId_.empty()) {
+        if (selMgr_.count() == 1) {
             auto hp = hitTestHandle(e.position);
             switch (hp) {
                 case HandlePos::TopLeft:
@@ -822,6 +880,28 @@ void GridCanvas::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWhee
 
 bool GridCanvas::keyPressed(const juce::KeyPress& key)
 {
+    // Undo/Redo
+    if (key.getModifiers().isCommandDown() && key.getKeyCode() == 'Z') {
+        if (key.getModifiers().isShiftDown())
+            undoMgr_.redo();
+        else
+            undoMgr_.undo();
+        return true;
+    }
+    // Clipboard
+    if (key.getModifiers().isCommandDown() && key.getKeyCode() == 'C') {
+        for (auto* l : canvasListeners_) l->copyRequested();
+        return true;
+    }
+    if (key.getModifiers().isCommandDown() && key.getKeyCode() == 'X') {
+        for (auto* l : canvasListeners_) l->cutRequested();
+        return true;
+    }
+    if (key.getModifiers().isCommandDown() && key.getKeyCode() == 'V') {
+        for (auto* l : canvasListeners_) l->pasteRequested();
+        return true;
+    }
+
     if (key == juce::KeyPress::deleteKey || key == juce::KeyPress::backspaceKey) {
         deleteSelected();
         return true;
@@ -830,6 +910,14 @@ bool GridCanvas::keyPressed(const juce::KeyPress& key)
         duplicateSelected();
         return true;
     }
+    if (key.getModifiers().isCommandDown() && key.getKeyCode() == 'A') {
+        std::vector<std::string> allIds;
+        for (auto& s : layout_->shapes())
+            allIds.push_back(s->id);
+        selMgr_.selectAll(allIds);
+        return true;
+    }
+
     // Tool shortcuts
     auto switchTool = [this](ToolMode m) {
         setToolMode(m);
@@ -842,15 +930,32 @@ bool GridCanvas::keyPressed(const juce::KeyPress& key)
     if (key.getTextCharacter() == 'c' || key.getTextCharacter() == 'C') { switchTool(ToolMode::DrawCircle); return true; }
     if (key.getTextCharacter() == 'h' || key.getTextCharacter() == 'H') { switchTool(ToolMode::DrawHex); return true; }
 
-    // Arrow keys: nudge selected shape
-    if (!selectedId_.empty()) {
+    // Arrow keys: nudge all selected shapes
+    if (!selMgr_.isEmpty()) {
         float step = key.getModifiers().isShiftDown() ? 5.0f : 1.0f;
-        auto* s = layout_.getShape(selectedId_);
-        if (s) {
-            if (key == juce::KeyPress::leftKey)  { layout_.moveShape(selectedId_, s->x - step, s->y); return true; }
-            if (key == juce::KeyPress::rightKey) { layout_.moveShape(selectedId_, s->x + step, s->y); return true; }
-            if (key == juce::KeyPress::upKey)    { layout_.moveShape(selectedId_, s->x, s->y - step); return true; }
-            if (key == juce::KeyPress::downKey)  { layout_.moveShape(selectedId_, s->x, s->y + step); return true; }
+        float dx = 0, dy = 0;
+        if (key == juce::KeyPress::leftKey)  dx = -step;
+        if (key == juce::KeyPress::rightKey) dx = step;
+        if (key == juce::KeyPress::upKey)    dy = -step;
+        if (key == juce::KeyPress::downKey)  dy = step;
+
+        if (dx != 0 || dy != 0) {
+            if (selMgr_.count() == 1) {
+                auto id = selMgr_.getSingleSelectedId();
+                auto* s = layout_->getShape(id);
+                if (s) {
+                    undoMgr_.perform(std::make_unique<MoveShapeAction>(
+                        *layout_, id, s->x + dx, s->y + dy));
+                }
+            } else {
+                std::vector<MoveMultipleAction::ShapePos> moves;
+                for (auto& id : selMgr_.getSelectedIds()) {
+                    auto* s = layout_->getShape(id);
+                    if (s) moves.push_back({id, s->x, s->y, s->x + dx, s->y + dy});
+                }
+                undoMgr_.perform(std::make_unique<MoveMultipleAction>(*layout_, std::move(moves)));
+            }
+            return true;
         }
     }
     return false;
@@ -890,34 +995,69 @@ void GridCanvas::setWidgetStates(const std::map<std::string, WidgetState>& state
     }
 }
 
+void GridCanvas::setHighlightedShapes(const std::set<std::string>& ids)
+{
+    if (ids != highlightedShapes_) {
+        highlightedShapes_ = ids;
+        repaint();
+    }
+}
+
 void GridCanvas::drawFingerOverlay(juce::Graphics& g)
 {
     if (fingers_.empty()) return;
 
-    int fingerNum = 1;
+    // Draw DAW-highlighted shapes first (pulsing glow)
+    if (!highlightedShapes_.empty()) {
+        float phase = (float)(juce::Time::getMillisecondCounter() % 1000) / 1000.0f;
+        float pulse = 0.2f + 0.15f * std::sin(phase * 6.2832f);
+
+        for (auto& shapeId : highlightedShapes_) {
+            auto* s = layout_->getShape(shapeId);
+            if (!s) continue;
+            auto b = s->bbox();
+            auto r = gridCellToScreen(b.xMin, b.yMin, b.xMax - b.xMin, b.yMax - b.yMin);
+            g.setColour(juce::Colour(255, 200, 50).withAlpha(pulse));
+            g.fillRect(r);
+            g.setColour(juce::Colour(255, 200, 50).withAlpha(pulse + 0.2f));
+            g.drawRect(r, 2.0f);
+        }
+    }
+
+    int fingerNum = 0;
     for (auto& [fid, dot] : fingers_) {
         auto screenPos = gridToScreen({dot.x, dot.y});
         float radius = 11.0f + dot.z * 5.0f;
 
-        // Outer glow ring (accent color, semi-transparent)
-        g.setColour(Theme::Colors::Accent.withAlpha(0.25f));
+        juce::Colour fingerCol = perFingerColors_
+            ? FingerPalette::juceColorForFinger(fingerNum)
+            : Theme::Colors::TextBright;
+        juce::Colour glowCol = perFingerColors_
+            ? fingerCol.withAlpha(0.25f)
+            : Theme::Colors::Accent.withAlpha(0.25f);
+        juce::Colour ringCol = perFingerColors_
+            ? fingerCol.brighter(0.3f)
+            : Theme::Colors::Accent;
+
+        g.setColour(glowCol);
         g.fillEllipse(screenPos.x - radius - 3, screenPos.y - radius - 3,
                       (radius + 3) * 2, (radius + 3) * 2);
 
-        // White circle
-        g.setColour(Theme::Colors::TextBright);
+        g.setColour(fingerCol);
         g.fillEllipse(screenPos.x - radius, screenPos.y - radius,
                       radius * 2, radius * 2);
 
-        // Accent border ring
-        g.setColour(Theme::Colors::Accent);
+        g.setColour(ringCol);
         g.drawEllipse(screenPos.x - radius, screenPos.y - radius,
                       radius * 2, radius * 2, 1.5f);
 
-        // Finger number (dark text)
-        g.setColour(Theme::Colors::CanvasBg);
+        // Finger number label
+        float lum = fingerCol.getFloatRed() * 0.299f
+                  + fingerCol.getFloatGreen() * 0.587f
+                  + fingerCol.getFloatBlue() * 0.114f;
+        g.setColour(lum > 0.5f ? juce::Colours::black : juce::Colours::white);
         g.setFont(juce::Font(radius * 1.1f, juce::Font::bold));
-        g.drawText(juce::String(fingerNum),
+        g.drawText(juce::String(fingerNum + 1),
                    (int)(screenPos.x - radius), (int)(screenPos.y - radius),
                    (int)(radius * 2), (int)(radius * 2),
                    juce::Justification::centred, false);

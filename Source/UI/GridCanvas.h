@@ -3,7 +3,10 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../Model/Layout.h"
 #include "../Model/Color.h"
+#include "../Core/UndoManager.h"
+#include "../Core/SelectionManager.h"
 #include "../Rendering/WidgetRenderer.h"
+#include "../Rendering/FingerPalette.h"
 #include "Theme.h"
 #include <set>
 #include <map>
@@ -19,16 +22,20 @@ enum class HandlePos { None, TopLeft, Top, TopRight, Right, BottomRight, Bottom,
 // GridCanvas — full-featured shape editor canvas
 // ============================================================
 class GridCanvas : public juce::Component,
-                   public Layout::Listener {
+                   public Layout::Listener,
+                   public SelectionManager::Listener {
 public:
     class Listener {
     public:
         virtual ~Listener() = default;
-        virtual void selectionChanged(const std::string& shapeId) = 0;
+        virtual void selectionChanged() = 0;
         virtual void toolModeChanged(ToolMode) {}
+        virtual void copyRequested() {}
+        virtual void cutRequested() {}
+        virtual void pasteRequested() {}
     };
 
-    GridCanvas(Layout& layout);
+    GridCanvas(Layout& layout, UndoManager& undoManager, SelectionManager& selectionManager);
     ~GridCanvas() override;
 
     void paint(juce::Graphics& g) override;
@@ -41,6 +48,7 @@ public:
     bool keyPressed(const juce::KeyPress& key) override;
 
     void layoutChanged() override;
+    void selectionChanged() override;
 
     // Coordinate conversions
     juce::Point<float> screenToGrid(juce::Point<float> screen) const;
@@ -61,11 +69,14 @@ public:
     void setBrushSize(int size) { brushSize_ = juce::jlimit(1, 5, size); }
     int getBrushSize() const { return brushSize_; }
 
-    // Selection
-    std::string getSelectedId() const { return selectedId_; }
+    // Selection (delegated to SelectionManager)
+    std::string getSelectedId() const { return selMgr_.getSingleSelectedId(); }
     void setSelectedId(const std::string& id);
     void deleteSelected();
     void duplicateSelected();
+
+    // Re-point to a different layout (for multi-page)
+    void setLayout(Layout& newLayout);
 
     // Finger overlay — call from editor timer
     struct FingerDot {
@@ -75,6 +86,8 @@ public:
     };
     void setFingers(const std::map<uint64_t, FingerDot>& fingers);
     void setWidgetStates(const std::map<std::string, WidgetState>& states);
+    void setHighlightedShapes(const std::set<std::string>& ids);
+    void setPerFingerColors(bool enabled) { perFingerColors_ = enabled; }
 
     void addListener(Listener* l) { canvasListeners_.push_back(l); }
     void removeListener(Listener* l) {
@@ -103,7 +116,7 @@ private:
     void erasePixel(int gx, int gy);
     static std::string pixelId(int gx, int gy) { return "px_" + std::to_string(gx) + "_" + std::to_string(gy); }
 
-    // Selection handles
+    // Selection handles (operates on primary selected shape)
     HandlePos hitTestHandle(juce::Point<float> screenPos) const;
     juce::Rectangle<float> getHandleRect(HandlePos pos) const;
     std::vector<HandlePos> allHandles() const;
@@ -116,7 +129,10 @@ private:
     // Grid snap
     float snapToGrid(float v) const { return std::round(v); }
 
-    Layout& layout_;
+    Layout* layout_;
+    UndoManager& undoMgr_;
+    SelectionManager& selMgr_;
+
     float zoom_ = Theme::DefaultZoom;
     juce::Point<float> panOffset_ {0, 0};
 
@@ -133,11 +149,15 @@ private:
     std::set<std::pair<int,int>> strokeCells_;
 
     // Selection state
-    std::string selectedId_;
     bool draggingShape_ = false;
     HandlePos draggingHandle_ = HandlePos::None;
     juce::Point<float> dragStartGrid_;
     float dragStartX_, dragStartY_, dragStartW_, dragStartH_, dragStartR_;
+    int currentDragId_ = 0; // for undo coalescing
+
+    // Multi-shape drag state
+    struct DragOrigin { float x, y; };
+    std::map<std::string, DragOrigin> dragOrigins_;
 
     // Creation state (DrawRect/Circle/Hex)
     bool creating_ = false;
@@ -150,6 +170,7 @@ private:
 
     // ID counter
     int shapeCounter_ = 0;
+    int dragIdCounter_ = 0;
 
     std::vector<Listener*> canvasListeners_;
 
@@ -158,6 +179,10 @@ private:
 
     // Widget states for visual rendering
     std::map<std::string, WidgetState> widgetStates_;
+
+    // DAW feedback highlights
+    std::set<std::string> highlightedShapes_;
+    bool perFingerColors_ = true;
 
     static constexpr float HandleSize = 8.0f;
 

@@ -25,6 +25,7 @@ public:
 
     void addShape(std::unique_ptr<Shape> shape);
     void removeShape(const std::string& id);
+    std::unique_ptr<Shape> extractShape(const std::string& id); // remove + return (for undo)
     void moveShape(const std::string& id, float newX, float newY);
     void resizeRect(const std::string& id, float newX, float newY, float newW, float newH);
     void resizeCircle(const std::string& id, float newCX, float newCY, float newR);

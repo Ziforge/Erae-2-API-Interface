@@ -18,6 +18,20 @@ void Layout::removeShape(const std::string& id)
     notifyListeners();
 }
 
+std::unique_ptr<Shape> Layout::extractShape(const std::string& id)
+{
+    std::unique_ptr<Shape> result;
+    for (auto it = shapes_.begin(); it != shapes_.end(); ++it) {
+        if ((*it)->id == id) {
+            result = std::move(*it);
+            shapes_.erase(it);
+            notifyListeners();
+            break;
+        }
+    }
+    return result;
+}
+
 void Layout::moveShape(const std::string& id, float newX, float newY)
 {
     if (auto* s = getShape(id)) {

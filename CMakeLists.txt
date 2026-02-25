@@ -36,6 +36,12 @@ target_sources(EraeShapeEditor
         Source/PluginProcessor.cpp
         Source/PluginEditor.h
         Source/PluginEditor.cpp
+        # Core (undo/redo, selection, alignment)
+        Source/Core/UndoManager.h
+        Source/Core/SelectionManager.h
+        Source/Core/AlignmentTools.h
+        Source/Core/LayoutActions.h
+        Source/Core/Clipboard.h
         # Model
         Source/Model/Shape.h
         Source/Model/Layout.h
@@ -45,6 +51,7 @@ target_sources(EraeShapeEditor
         Source/Model/Preset.cpp
         Source/Model/Color.h
         Source/Model/VisualStyle.h
+        Source/Model/MultiPageLayout.h
         # Rendering
         Source/Rendering/WidgetRenderer.h
         Source/Rendering/WidgetRenderer.cpp
@@ -72,6 +79,12 @@ target_sources(EraeShapeEditor
         Source/MIDI/MPEAllocator.cpp
         Source/MIDI/BehaviorEngine.h
         Source/MIDI/BehaviorEngine.cpp
+        Source/MIDI/VelocityCurve.h
+        Source/MIDI/ScaleQuantizer.h
+        Source/MIDI/OscOutput.h
+        Source/MIDI/DawFeedback.h
+        # Rendering (Phase 5)
+        Source/Rendering/FingerPalette.h
 )
 
 target_compile_definitions(EraeShapeEditor

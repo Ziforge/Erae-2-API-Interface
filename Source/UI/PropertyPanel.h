@@ -70,6 +70,36 @@ private:
 
     juce::Label mpeHint_        {"", "(MPE: pitch-X, slide-Y, pressure-Z)"};
 
+    // Phase 2: Musical features
+    juce::Label velCurveLabel_     {"", "Vel Curve"};
+    juce::ComboBox velocityCurveBox_;
+    juce::Label pressCurveLabel_   {"", "Press Curve"};
+    juce::ComboBox pressureCurveBox_;
+    juce::Label latchLabel_        {"", "Latch"};
+    juce::ToggleButton latchToggle_;
+    juce::Label scaleLabel_        {"", "Scale"};
+    juce::ComboBox scaleBox_;
+    juce::Label rootNoteLabel_     {"", "Root"};
+    juce::Slider rootNoteSlider_;
+    juce::Label pitchQuantLabel_   {"", "Quantize PB"};
+    juce::ToggleButton pitchQuantizeToggle_;
+    juce::Label glideLabel_        {"", "Glide"};
+    juce::Slider glideSlider_;
+
+    // Phase 4: CC ranges
+    juce::Label ccMinLabel_    {"", "CC Min"};
+    juce::Slider ccMinSlider_;
+    juce::Label ccMaxLabel_    {"", "CC Max"};
+    juce::Slider ccMaxSlider_;
+    juce::Label ccXMinLabel_   {"", "X Min"};
+    juce::Slider ccXMinSlider_;
+    juce::Label ccXMaxLabel_   {"", "X Max"};
+    juce::Slider ccXMaxSlider_;
+    juce::Label ccYMinLabel_   {"", "Y Min"};
+    juce::Slider ccYMinSlider_;
+    juce::Label ccYMaxLabel_   {"", "Y Max"};
+    juce::Slider ccYMaxSlider_;
+
     // Visual style controls
     juce::Label visualLabel_    {"", "VISUAL"};
     juce::ComboBox visualBox_;

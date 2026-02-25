@@ -29,20 +29,22 @@ static juce::var noteParams(int note, int channel = 0)
     return juce::var(obj);
 }
 
-static juce::var ccParams(int cc, int channel = 0)
+static juce::var ccParams(int cc, int channel = 0, bool highres = true)
 {
     auto obj = new juce::DynamicObject();
     obj->setProperty("cc", cc);
     obj->setProperty("channel", channel);
+    obj->setProperty("highres", highres);
     return juce::var(obj);
 }
 
-static juce::var xyParams(int ccX, int ccY, int channel = 0)
+static juce::var xyParams(int ccX, int ccY, int channel = 0, bool highres = true)
 {
     auto obj = new juce::DynamicObject();
     obj->setProperty("cc_x", ccX);
     obj->setProperty("cc_y", ccY);
     obj->setProperty("channel", channel);
+    obj->setProperty("highres", highres);
     return juce::var(obj);
 }
 

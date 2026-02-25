@@ -9,12 +9,14 @@ EraeProcessor::EraeProcessor()
           .withInput("Input",  juce::AudioChannelSet::stereo(), true)
           .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       behaviorEngine_(midiOut_, mpeAllocator_),
-      renderer_(layout_, connection_)
+      renderer_(multiLayout_.currentPage(), connection_)
 {
     renderer_.setProcessor(this);
+    behaviorEngine_.setOscOutput(&oscOutput_);
 
     // Load default drum pads layout
-    layout_.setShapes(Preset::drumPads());
+    multiLayout_.currentPage().setShapes(Preset::drumPads());
+    dawFeedback_.updateFromLayout(multiLayout_.currentPage());
 
     // Register for finger events
     connection_.addListener(this);
@@ -40,6 +42,9 @@ void EraeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuf
 {
     juce::ignoreUnused(buffer);
 
+    // Process incoming MIDI from DAW for feedback highlighting
+    dawFeedback_.processIncomingMidi(midiMessages);
+
     // Drain generated MIDI (from touch → behavior engine) into the output
     midiOut_.drainInto(midiMessages, buffer.getNumSamples());
 }
@@ -51,16 +56,17 @@ juce::AudioProcessorEditor* EraeProcessor::createEditor()
 
 void EraeProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
-    auto json = Preset::toJSON(layout_.shapes());
+    auto json = juce::JSON::toString(multiLayout_.toVar());
     destData.append(json.toRawUTF8(), json.getNumBytesAsUTF8());
 }
 
 void EraeProcessor::setStateInformation(const void* data, int sizeInBytes)
 {
     auto json = juce::String::fromUTF8(static_cast<const char*>(data), sizeInBytes);
-    auto shapes = Preset::fromJSON(json);
-    if (!shapes.empty())
-        layout_.setShapes(std::move(shapes));
+    auto parsed = juce::JSON::parse(json);
+    if (parsed.isObject()) {
+        multiLayout_.fromVar(parsed);
+    }
 }
 
 void EraeProcessor::fingerEvent(const FingerEvent& event)
@@ -83,7 +89,7 @@ void EraeProcessor::fingerEvent(const FingerEvent& event)
     // Hit test: on DOWN capture shape, on MOVE re-test so sliding off clears
     Shape* shape = nullptr;
     if (flipped.action != SysEx::ACTION_UP) {
-        shape = layout_.hitTest(flipped.x, flipped.y);
+        shape = getLayout().hitTest(flipped.x, flipped.y);
         juce::SpinLock::ScopedLockType lock(fingerLock_);
         if (shape)
             fingerShapeMap_[flipped.fingerId] = shape->id;
@@ -122,7 +128,7 @@ std::map<std::string, WidgetState> EraeProcessor::getShapeWidgetStates() const
         auto fingerIt = activeFingers_.find(fingerId);
         if (fingerIt == activeFingers_.end()) continue;
 
-        auto* shape = layout_.getShape(shapeId);
+        auto* shape = multiLayout_.currentPage().getShape(shapeId);
         if (!shape) continue;
 
         auto bb = shape->bbox();
@@ -140,6 +146,18 @@ std::map<std::string, WidgetState> EraeProcessor::getShapeWidgetStates() const
             result[shapeId] = {normX, normY, fingerIt->second.z, true};
         }
     }
+    // Merge DAW feedback highlights
+    if (dawFeedback_.isEnabled()) {
+        auto highlighted = dawFeedback_.getHighlightedShapes();
+        for (auto& shapeId : highlighted) {
+            auto it = result.find(shapeId);
+            if (it == result.end()) {
+                // Shape not touched by finger — add a synthetic "active" state
+                result[shapeId] = {0.5f, 0.5f, 0.5f, true};
+            }
+        }
+    }
+
     return result;
 }
 
