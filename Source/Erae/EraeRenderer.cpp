@@ -1,0 +1,125 @@
+#include "EraeRenderer.h"
+#include "../PluginProcessor.h"
+#include <cstring>
+
+namespace erae {
+
+EraeRenderer::EraeRenderer(Layout& layout, EraeConnection& connection)
+    : layout_(layout), connection_(connection)
+{
+    layout_.addListener(this);
+}
+
+EraeRenderer::~EraeRenderer()
+{
+    stopTimer();
+    layout_.removeListener(this);
+}
+
+void EraeRenderer::requestFullRedraw()
+{
+    dirty_ = true;
+    if (!isTimerRunning())
+        startTimer(50); // 20 fps max
+}
+
+void EraeRenderer::layoutChanged()
+{
+    requestFullRedraw();
+}
+
+void EraeRenderer::timerCallback()
+{
+    if (!connection_.isConnected()) {
+        if (!dirty_)
+            stopTimer();
+        return;
+    }
+
+    // Get current widget states from processor
+    std::map<std::string, WidgetState> widgetStates;
+    if (processor_)
+        widgetStates = processor_->getShapeWidgetStates();
+
+    bool widgetsChanged = widgetStates != lastWidgetStates_;
+
+    if (dirty_ || widgetsChanged) {
+        // Build a 42×24 framebuffer, composite all shapes, send as one image
+        static constexpr int W = 42, H = 24;
+        uint8_t fb[H][W][3];  // [y][x][rgb] — 7-bit values
+        std::memset(fb, 0, sizeof(fb));
+
+        // Render each shape into the framebuffer (painter's algorithm: later shapes overwrite)
+        for (auto& shape : layout_.shapes()) {
+            auto it = widgetStates.find(shape->id);
+            WidgetState state;
+            if (it != widgetStates.end())
+                state = it->second;
+
+            auto style = visualStyleFromString(shape->visualStyle);
+
+            if (style != VisualStyle::Static || state.active) {
+                // Widget rendering: get per-pixel colored commands
+                auto cmds = WidgetRenderer::renderWidget(*shape, state);
+                for (auto& cmd : cmds) {
+                    if (cmd.x >= 0 && cmd.x < W && cmd.y >= 0 && cmd.y < H) {
+                        fb[cmd.y][cmd.x][0] = (uint8_t)cmd.color.r;
+                        fb[cmd.y][cmd.x][1] = (uint8_t)cmd.color.g;
+                        fb[cmd.y][cmd.x][2] = (uint8_t)cmd.color.b;
+                    }
+                }
+            } else {
+                // Static: all pixels get shape color
+                auto pixels = shape->gridPixels();
+                uint8_t r = (uint8_t)shape->color.r;
+                uint8_t g = (uint8_t)shape->color.g;
+                uint8_t b = (uint8_t)shape->color.b;
+                for (auto& [px, py] : pixels) {
+                    if (px >= 0 && px < W && py >= 0 && py < H) {
+                        fb[py][px][0] = r;
+                        fb[py][px][1] = g;
+                        fb[py][px][2] = b;
+                    }
+                }
+            }
+        }
+
+        // Send framebuffer as drawImage — flip Y for hardware
+        // Hardware Y=0 is at bottom, software Y=0 is at top
+        std::vector<uint8_t> rgbData(W * H * 3);
+        for (int sy = 0; sy < H; ++sy) {
+            int hy = (H - 1) - sy;  // flip Y
+            for (int x = 0; x < W; ++x) {
+                int idx = (hy * W + x) * 3;
+                rgbData[idx + 0] = fb[sy][x][0];
+                rgbData[idx + 1] = fb[sy][x][1];
+                rgbData[idx + 2] = fb[sy][x][2];
+            }
+        }
+
+        // drawImage overwrites all pixels — no need for clearZone
+        // (clearZone + drawImage causes visible black flash)
+        connection_.drawImage(0, 0, 0, W, H, rgbData);
+
+        lastWidgetStates_ = widgetStates;
+        dirty_ = false;
+    }
+
+    // Keep timer running while connected — the timer callback is cheap
+    // when nothing changes (just a map comparison), and we need it
+    // running to detect new finger touches on visual widgets.
+    if (!connection_.isConnected())
+        stopTimer();
+}
+
+void EraeRenderer::render()
+{
+    // Rendering is now done entirely in timerCallback via framebuffer
+}
+
+void EraeRenderer::renderShape(const Shape& /*shape*/, const WidgetState& /*state*/)
+{
+    // No longer used — all rendering is done via framebuffer in timerCallback
+}
+
+} // namespace erae
