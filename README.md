@@ -12,6 +12,13 @@ A JUCE-based visual layout editor and MIDI controller for the **Erae Touch II** 
 - **Real-time Hardware Rendering** - Layouts are pushed to the Erae surface as RGB pixel data via SysEx, with animated visual feedback (pressure glow, fill bars, position dots, radial arcs)
 - **MIDI Generation** - Each shape can be assigned a MIDI behavior (trigger, momentary, note pad with MPE, XY controller, fader) that generates MIDI from finger touch events
 - **Finger Tracking** - Receives finger position data from the Erae II fingerstream API and dispatches touch events to the appropriate shapes
+- **Undo/Redo** - Full command-pattern undo/redo for all editing operations, with drag coalescing so a single undo step reverses an entire drag
+- **Multi-Select & Alignment** - Shift+click to multi-select shapes, then align (left/right/top/bottom/center) or distribute evenly. Clipboard copy/cut/paste with Ctrl+C/X/V
+- **Multi-Page Layouts** - Organize shapes across multiple pages with page navigation; JSON format auto-detects v1 (single page) and v2 (multi-page)
+- **Musical Features** - Velocity curves (linear/exponential/logarithmic/S-curve), scale quantization (10 scales with glide), note latch, pressure curves, CC output ranges
+- **OSC Output** - Mirror all MIDI output as OSC messages over UDP for integration with TouchDesigner, Max/MSP, SuperCollider, etc.
+- **Per-Finger Colors** - Each finger gets a distinct color (10-color palette) on both the screen overlay and hardware surface
+- **DAW Feedback** - Incoming MIDI note-on/off from the DAW highlights the corresponding shapes with a pulsing glow, so pads light up during playback
 - **Preset Library** - Built-in presets (Drum Pads, Piano, Wicki-Hayden, Fader Bank, XY Pad, Buchla Thunder) plus save/load of custom layouts as JSON
 - **Runs as Standalone or VST3** - Use it as a standalone app or load it in your DAW
 
@@ -34,11 +41,26 @@ Each shape can have an independent visual style that animates on the hardware su
 
 ## MIDI Behaviors
 
-- **Trigger** - Note on/off on touch down/up (fixed velocity or pressure-mapped)
-- **Momentary** - Note on while held, off on release
-- **Note Pad (MPE)** - Per-finger channel allocation with pitch bend and pressure
-- **XY Controller** - Sends two CC values based on finger X/Y position
-- **Fader** - Single CC value mapped to finger position along one axis
+- **Trigger** - Note on/off on touch down/up. Supports fixed or pressure-mapped velocity, configurable velocity curve, and latch mode (toggle on/off per press)
+- **Momentary** - Note on while held, off on release. Velocity and aftertouch pressure curves are independently configurable
+- **Note Pad (MPE)** - Per-finger channel allocation with pitch bend (X), slide CC (Y), and pressure (Z). Optional scale quantization (chromatic, major, minor, pentatonic, blues, dorian, mixolydian, whole tone, harmonic minor) with adjustable glide between scale degrees
+- **XY Controller** - Sends two CC values based on finger X/Y position. Supports 7-bit or 14-bit hi-res mode, with configurable min/max output range per axis
+- **Fader** - Single CC value mapped to finger position along one axis (horizontal or vertical). Supports 7-bit or 14-bit hi-res, with configurable min/max output range
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|---|---|
+| Ctrl+Z | Undo |
+| Ctrl+Shift+Z | Redo |
+| Ctrl+A | Select all |
+| Ctrl+C / X / V | Copy / Cut / Paste |
+| Ctrl+D | Duplicate selection |
+| Delete / Backspace | Delete selection |
+| V / B / E / R / C / H | Select / Paint / Erase / Rect / Circle / Hex tool |
+| Arrow keys | Nudge selected shapes (Shift = 5px) |
+| Scroll wheel | Zoom in/out |
+| Middle-click drag | Pan canvas |
 
 ## Building
 
@@ -64,9 +86,34 @@ The Erae II SysEx API is used for:
 - Receiving finger position/pressure data
 - Querying zone boundaries
 
+## OSC Output
+
+When enabled, all MIDI output is mirrored as OSC messages over UDP (configurable host:port). Message format:
+
+| Address | Arguments |
+|---|---|
+| `/erae/note/on` | channel, note, velocity |
+| `/erae/note/off` | channel, note |
+| `/erae/cc` | channel, controller, value |
+| `/erae/pressure` | channel, value |
+| `/erae/pitchbend` | channel, value |
+| `/erae/finger` | fingerId, x, y, z, shapeId |
+
 ## File Format
 
-Layouts are saved as JSON files compatible with the Python `erae_shapes` format. Each shape stores its geometry, colors (7-bit RGB, 0-127), behavior type, behavior parameters, and visual style.
+Layouts are saved as JSON files. The v2 format wraps multiple pages:
+
+```json
+{
+  "version": 2,
+  "pages": [
+    { "shapes": [...] },
+    { "shapes": [...] }
+  ]
+}
+```
+
+Single-page v1 files (no `"version"` key) are auto-detected and loaded as a single page. Each shape stores its geometry, colors (7-bit RGB, 0-127), behavior type, behavior parameters, and visual style.
 
 ## License
 
