@@ -6,7 +6,8 @@ namespace erae {
 EraeEditor::EraeEditor(EraeProcessor& p)
     : AudioProcessorEditor(p),
       processor_(p),
-      canvas_(p.getLayout())
+      canvas_(p.getLayout()),
+      propertyPanel_(p.getLayout())
 {
     setLookAndFeel(&lookAndFeel_);
 

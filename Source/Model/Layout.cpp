@@ -128,6 +128,53 @@ juce::var Layout::toVar() const
     return juce::var(obj);
 }
 
+int Layout::nextAvailableNote(int startFrom) const
+{
+    std::set<int> usedNotes;
+    for (auto& s : shapes_) {
+        auto btype = behaviorFromString(s->behavior);
+        if (btype == BehaviorType::Trigger || btype == BehaviorType::Momentary || btype == BehaviorType::NotePad) {
+            if (auto* obj = s->behaviorParams.getDynamicObject())
+                if (obj->hasProperty("note"))
+                    usedNotes.insert((int)obj->getProperty("note"));
+        }
+    }
+    // Search from startFrom upward, wrapping around 0-127
+    for (int i = 0; i < 128; ++i) {
+        int candidate = (startFrom + i) % 128;
+        if (usedNotes.find(candidate) == usedNotes.end())
+            return candidate;
+    }
+    return startFrom; // all 128 used, just return startFrom
+}
+
+int Layout::nextAvailableCC(int startFrom) const
+{
+    std::set<int> usedCCs;
+    for (auto& s : shapes_) {
+        auto btype = behaviorFromString(s->behavior);
+        if (btype == BehaviorType::Fader) {
+            if (auto* obj = s->behaviorParams.getDynamicObject())
+                if (obj->hasProperty("cc"))
+                    usedCCs.insert((int)obj->getProperty("cc"));
+        }
+        if (btype == BehaviorType::XYController) {
+            if (auto* obj = s->behaviorParams.getDynamicObject()) {
+                if (obj->hasProperty("cc_x"))
+                    usedCCs.insert((int)obj->getProperty("cc_x"));
+                if (obj->hasProperty("cc_y"))
+                    usedCCs.insert((int)obj->getProperty("cc_y"));
+            }
+        }
+    }
+    for (int i = 0; i < 127; ++i) {
+        int candidate = ((startFrom - 1 + i) % 127) + 1; // range 1-127
+        if (usedCCs.find(candidate) == usedCCs.end())
+            return candidate;
+    }
+    return startFrom;
+}
+
 void Layout::sortByZOrder()
 {
     std::stable_sort(shapes_.begin(), shapes_.end(),

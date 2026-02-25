@@ -72,6 +72,27 @@ void GridCanvas::duplicateSelected()
     dup->id = nextShapeId();
     dup->x += 1.0f;
     dup->y += 1.0f;
+
+    // Auto-assign unique note/CC so duplicates don't clash
+    auto btype = behaviorFromString(dup->behavior);
+    auto* obj = dup->behaviorParams.getDynamicObject();
+    if (obj) {
+        if (btype == BehaviorType::Trigger || btype == BehaviorType::Momentary || btype == BehaviorType::NotePad) {
+            int oldNote = obj->hasProperty("note") ? (int)obj->getProperty("note") : 60;
+            obj->setProperty("note", layout_.nextAvailableNote(oldNote + 1));
+        }
+        if (btype == BehaviorType::Fader) {
+            int oldCC = obj->hasProperty("cc") ? (int)obj->getProperty("cc") : 1;
+            obj->setProperty("cc", layout_.nextAvailableCC(oldCC + 1));
+        }
+        if (btype == BehaviorType::XYController) {
+            int oldX = obj->hasProperty("cc_x") ? (int)obj->getProperty("cc_x") : 1;
+            int newX = layout_.nextAvailableCC(oldX + 1);
+            obj->setProperty("cc_x", newX);
+            obj->setProperty("cc_y", layout_.nextAvailableCC(newX + 1));
+        }
+    }
+
     auto newId = dup->id;
     layout_.addShape(std::move(dup));
     setSelectedId(newId);
@@ -168,6 +189,11 @@ void GridCanvas::paintPixel(int gx, int gy)
     shape->color = paintColor_;
     shape->colorActive = brighten(paintColor_);
     shape->behavior = "trigger";
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty("note", layout_.nextAvailableNote(60));
+    obj->setProperty("channel", 0);
+    obj->setProperty("velocity", -1);
+    shape->behaviorParams = juce::var(obj);
     layout_.addShape(std::move(shape));
 }
 
@@ -275,6 +301,12 @@ void GridCanvas::finishCreation()
         shape->color = paintColor_;
         shape->colorActive = brighten(paintColor_);
         shape->behavior = "trigger";
+        // Auto-assign unique note so shapes don't clash
+        auto* obj = new juce::DynamicObject();
+        obj->setProperty("note", layout_.nextAvailableNote(60));
+        obj->setProperty("channel", 0);
+        obj->setProperty("velocity", -1);
+        shape->behaviorParams = juce::var(obj);
         layout_.addShape(std::move(shape));
         setSelectedId(id);
     }

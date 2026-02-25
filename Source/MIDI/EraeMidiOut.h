@@ -14,6 +14,7 @@ public:
     void noteOn(int channel, int note, int velocity);
     void noteOff(int channel, int note);
     void cc(int channel, int controller, int value);
+    void cc14bit(int channel, int controller, int value14); // sends CC N (MSB) + CC N+32 (LSB), value 0-16383
     void pressure(int channel, int value);
     void pitchBend(int channel, int value); // 0-16383, center=8192
 

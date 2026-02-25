@@ -26,6 +26,14 @@ void EraeMidiOut::cc(int channel, int controller, int value)
     addMessage(juce::MidiMessage::controllerEvent(channel + 1, controller, value));
 }
 
+void EraeMidiOut::cc14bit(int channel, int controller, int value14)
+{
+    int msb = (value14 >> 7) & 0x7F;
+    int lsb = value14 & 0x7F;
+    addMessage(juce::MidiMessage::controllerEvent(channel + 1, controller, msb));
+    addMessage(juce::MidiMessage::controllerEvent(channel + 1, controller + 32, lsb));
+}
+
 void EraeMidiOut::pressure(int channel, int value)
 {
     addMessage(juce::MidiMessage::channelPressureChange(channel + 1, value));

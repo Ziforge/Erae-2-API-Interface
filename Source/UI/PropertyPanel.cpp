@@ -23,7 +23,8 @@ static void styleSlider(juce::Slider& slider, double min, double max, double def
     slider.setColour(juce::Slider::textBoxTextColourId, Theme::Colors::Text);
 }
 
-PropertyPanel::PropertyPanel()
+PropertyPanel::PropertyPanel(Layout& layout)
+    : layout_(layout)
 {
     styleLabel(behaviorLabel_, true);
     addAndMakeVisible(behaviorLabel_);
@@ -87,6 +88,12 @@ PropertyPanel::PropertyPanel()
     horizToggle_.addListener(this);
     addAndMakeVisible(horizLabel_);
     addAndMakeVisible(horizToggle_);
+
+    // Hi-Res 14-bit toggle (for Fader and XY Controller)
+    styleLabel(highresLabel_);
+    highresToggle_.addListener(this);
+    addAndMakeVisible(highresLabel_);
+    addAndMakeVisible(highresToggle_);
 
     // Slide CC slider (0-127, default 74 for MPE Y-axis)
     styleLabel(slideCCLabel_);
@@ -179,6 +186,14 @@ void PropertyPanel::resized()
         area.removeFromTop(3);
     }
 
+    // Hi-Res 14-bit toggle row
+    {
+        auto row = area.removeFromTop(rowH);
+        highresLabel_.setBounds(row.removeFromLeft(labelW));
+        highresToggle_.setBounds(row.removeFromLeft(rowH));
+        area.removeFromTop(3);
+    }
+
     // MPE hint
     mpeHint_.setBounds(area.removeFromTop(16));
     area.removeFromTop(gap + 2);
@@ -239,6 +254,13 @@ void PropertyPanel::loadShape(Shape* shape)
     ccYSlider_.setValue(getP("cc_y", 2), juce::dontSendNotification);
     slideCCSlider_.setValue(getP("slide_cc", 74), juce::dontSendNotification);
     horizToggle_.setToggleState(getPBool("horizontal", false), juce::dontSendNotification);
+    bool hr = getPBool("highres", false);
+    highresToggle_.setToggleState(hr, juce::dontSendNotification);
+    // Set CC slider ranges based on hi-res state
+    double maxCC = hr ? 31.0 : 127.0;
+    ccSlider_.setRange(0, maxCC, 1.0);
+    ccXSlider_.setRange(0, maxCC, 1.0);
+    ccYSlider_.setRange(0, maxCC, 1.0);
 
     // Visual style
     auto vstyle = visualStyleFromString(shape->visualStyle);
@@ -285,6 +307,22 @@ void PropertyPanel::comboBoxChanged(juce::ComboBox* box)
             default: return;
         }
         currentShape_->behavior = behaviorToString(btype);
+
+        // Auto-assign unique note/CC for the new behavior type
+        if (btype == BehaviorType::Trigger || btype == BehaviorType::Momentary || btype == BehaviorType::NotePad) {
+            int note = layout_.nextAvailableNote(60);
+            noteSlider_.setValue(note, juce::dontSendNotification);
+        }
+        if (btype == BehaviorType::Fader) {
+            int cc = layout_.nextAvailableCC(1);
+            ccSlider_.setValue(cc, juce::dontSendNotification);
+        }
+        if (btype == BehaviorType::XYController) {
+            int ccX = layout_.nextAvailableCC(1);
+            ccXSlider_.setValue(ccX, juce::dontSendNotification);
+            int ccY = layout_.nextAvailableCC(ccX + 1);
+            ccYSlider_.setValue(ccY, juce::dontSendNotification);
+        }
     }
     else if (box == &visualBox_) {
         int id = visualBox_.getSelectedId();
@@ -315,9 +353,18 @@ void PropertyPanel::sliderValueChanged(juce::Slider*)
     notifyListeners();
 }
 
-void PropertyPanel::buttonClicked(juce::Button*)
+void PropertyPanel::buttonClicked(juce::Button* button)
 {
     if (loading_ || !currentShape_) return;
+
+    // When hi-res toggled, update CC slider ranges (0-31 for 14-bit, 0-127 for 7-bit)
+    if (button == &highresToggle_) {
+        double maxCC = highresToggle_.getToggleState() ? 31.0 : 127.0;
+        ccSlider_.setRange(0, maxCC, 1.0);
+        ccXSlider_.setRange(0, maxCC, 1.0);
+        ccYSlider_.setRange(0, maxCC, 1.0);
+    }
+
     writeParamsToShape();
     notifyListeners();
 }
@@ -332,6 +379,7 @@ void PropertyPanel::updateVisibility()
     bool showCC       = (btype == BehaviorType::Fader);
     bool showCCXY     = (btype == BehaviorType::XYController);
     bool showHoriz    = (btype == BehaviorType::Fader);
+    bool showHighres  = (btype == BehaviorType::Fader || btype == BehaviorType::XYController);
     bool showSlideCC  = (btype == BehaviorType::NotePad);
     bool showMPEHint  = (btype == BehaviorType::NotePad);
 
@@ -349,6 +397,8 @@ void PropertyPanel::updateVisibility()
     ccYSlider_.setVisible(showCCXY);
     horizLabel_.setVisible(showHoriz);
     horizToggle_.setVisible(showHoriz);
+    highresLabel_.setVisible(showHighres);
+    highresToggle_.setVisible(showHighres);
     slideCCLabel_.setVisible(showSlideCC);
     slideCCSlider_.setVisible(showSlideCC);
     mpeHint_.setVisible(showMPEHint);
@@ -386,16 +436,24 @@ void PropertyPanel::writeParamsToShape()
             obj->setProperty("slide_cc", (int)slideCCSlider_.getValue());
             // No channel — MPE allocates dynamically via MPEAllocator
             break;
-        case BehaviorType::XYController:
-            obj->setProperty("cc_x", (int)ccXSlider_.getValue());
-            obj->setProperty("cc_y", (int)ccYSlider_.getValue());
+        case BehaviorType::XYController: {
+            bool hr = highresToggle_.getToggleState();
+            int maxCC = hr ? 31 : 127;
+            obj->setProperty("cc_x", juce::jlimit(0, maxCC, (int)ccXSlider_.getValue()));
+            obj->setProperty("cc_y", juce::jlimit(0, maxCC, (int)ccYSlider_.getValue()));
             obj->setProperty("channel", (int)channelSlider_.getValue());
+            obj->setProperty("highres", hr);
             break;
-        case BehaviorType::Fader:
-            obj->setProperty("cc", (int)ccSlider_.getValue());
+        }
+        case BehaviorType::Fader: {
+            bool hr = highresToggle_.getToggleState();
+            int maxCC = hr ? 31 : 127;
+            obj->setProperty("cc", juce::jlimit(0, maxCC, (int)ccSlider_.getValue()));
             obj->setProperty("channel", (int)channelSlider_.getValue());
             obj->setProperty("horizontal", horizToggle_.getToggleState());
+            obj->setProperty("highres", hr);
             break;
+        }
     }
 
     currentShape_->behaviorParams = juce::var(obj);

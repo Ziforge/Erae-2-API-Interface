@@ -1,9 +1,11 @@
 #pragma once
 
 #include "Shape.h"
+#include "Behavior.h"
 #include <vector>
 #include <memory>
 #include <algorithm>
+#include <set>
 
 namespace erae {
 
@@ -50,6 +52,10 @@ public:
 
     int getGridWidth() const { return gridWidth; }
     int getGridHeight() const { return gridHeight; }
+
+    // Auto-assignment helpers — find next unused note/CC across all shapes
+    int nextAvailableNote(int startFrom = 60) const;
+    int nextAvailableCC(int startFrom = 1) const;
 
 private:
     void sortByZOrder();

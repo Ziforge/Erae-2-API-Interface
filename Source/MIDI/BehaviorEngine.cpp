@@ -150,11 +150,17 @@ void BehaviorEngine::handleXY(const FingerEvent& event, Shape* shape, FingerStat
     int ccX = getParam(*shape, "cc_x", 1);
     int ccY = getParam(*shape, "cc_y", 2);
     int channel = getParam(*shape, "channel", 0);
+    bool highres = getParamBool(*shape, "highres", false);
 
     if (event.action == SysEx::ACTION_DOWN || event.action == SysEx::ACTION_MOVE) {
         auto [nx, ny] = normalizeInShape(fs.x, fs.y, *shape);
-        midi_.cc(channel, ccX, (int)(nx * 127.0f));
-        midi_.cc(channel, ccY, (int)(ny * 127.0f));
+        if (highres) {
+            midi_.cc14bit(channel, ccX, (int)(nx * 16383.0f));
+            midi_.cc14bit(channel, ccY, (int)(ny * 16383.0f));
+        } else {
+            midi_.cc(channel, ccX, (int)(nx * 127.0f));
+            midi_.cc(channel, ccY, (int)(ny * 127.0f));
+        }
     }
 }
 
@@ -163,11 +169,16 @@ void BehaviorEngine::handleFader(const FingerEvent& event, Shape* shape, FingerS
     int ccNum = getParam(*shape, "cc", 1);
     int channel = getParam(*shape, "channel", 0);
     bool horizontal = getParamBool(*shape, "horizontal", false);
+    bool highres = getParamBool(*shape, "highres", false);
 
     if (event.action == SysEx::ACTION_DOWN || event.action == SysEx::ACTION_MOVE) {
         auto [nx, ny] = normalizeInShape(fs.x, fs.y, *shape);
         float value = horizontal ? nx : ny;
-        midi_.cc(channel, ccNum, (int)(value * 127.0f));
+        if (highres) {
+            midi_.cc14bit(channel, ccNum, (int)(value * 16383.0f));
+        } else {
+            midi_.cc(channel, ccNum, (int)(value * 127.0f));
+        }
     }
 }
 

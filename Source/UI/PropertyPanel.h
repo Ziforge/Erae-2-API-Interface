@@ -4,6 +4,7 @@
 #include "../Model/Shape.h"
 #include "../Model/Behavior.h"
 #include "../Model/VisualStyle.h"
+#include "../Model/Layout.h"
 #include "Theme.h"
 
 namespace erae {
@@ -19,7 +20,7 @@ public:
         virtual void behaviorChanged(const std::string& shapeId) = 0;
     };
 
-    PropertyPanel();
+    PropertyPanel(Layout& layout);
 
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -41,6 +42,7 @@ private:
     void writeParamsToShape();
     void notifyListeners();
 
+    Layout& layout_;
     Shape* currentShape_ = nullptr;
     bool loading_ = false;
 
@@ -61,6 +63,8 @@ private:
     juce::Slider ccYSlider_;
     juce::Label horizLabel_     {"", "Horizontal"};
     juce::ToggleButton horizToggle_;
+    juce::Label highresLabel_   {"", "Hi-Res 14b"};
+    juce::ToggleButton highresToggle_;
     juce::Label slideCCLabel_   {"", "Slide CC"};
     juce::Slider slideCCSlider_;
 
