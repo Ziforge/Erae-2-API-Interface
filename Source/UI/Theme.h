@@ -27,8 +27,8 @@ namespace Theme {
     inline constexpr int ToolbarHeight   = 40;
     inline constexpr int SidebarWidth    = 270;
     inline constexpr int StatusBarHeight = 24;
-    inline constexpr int DefaultWindowW  = 1200;
-    inline constexpr int DefaultWindowH  = 720;
+    inline constexpr int DefaultWindowW  = 1440;
+    inline constexpr int DefaultWindowH  = 860;
 
     // 8-point spacing scale
     inline constexpr int SpaceXS  = 2;

@@ -48,8 +48,11 @@ namespace SysEx {
     inline constexpr int ACTION_MOVE = 1;
     inline constexpr int ACTION_UP   = 2;
 
-    // Image chunking
-    inline constexpr int MAX_IMAGE_ROWS = 8;
+    // Image chunking — set to full height to send entire image atomically.
+    // The Erae II firmware handles full-frame SysEx (Python reference sends
+    // the complete image in one message). Splitting into multiple chunks
+    // caused visible flashing from partial frame updates.
+    inline constexpr int MAX_IMAGE_ROWS = 24;
 
     // ============================================================
     // Build the SysEx header for Erae II commands

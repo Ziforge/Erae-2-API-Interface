@@ -13,7 +13,7 @@
 
 namespace erae {
 
-enum class ToolMode { Select, Paint, Erase, DrawRect, DrawCircle, DrawHex, DrawPoly, DrawPixel };
+enum class ToolMode { Select, Paint, Erase, DrawRect, DrawCircle, DrawHex, DrawPoly, DrawPixel, EditShape };
 
 // Handle positions for selected shape resize
 enum class HandlePos { None, TopLeft, Top, TopRight, Right, BottomRight, Bottom, BottomLeft, Left };
@@ -97,6 +97,11 @@ public:
     bool isCreatingPixelShape() const { return creatingPixelShape_; }
     bool isCreatingPoly() const { return creatingPoly_; }
 
+    // Edit-shape mode
+    void enterEditMode(const std::string& shapeId);
+    void exitEditMode(bool commit = true);
+    bool isEditingShape() const { return !editingShapeId_.empty(); }
+
     void addListener(Listener* l) { canvasListeners_.push_back(l); }
     void removeListener(Listener* l) {
         canvasListeners_.erase(std::remove(canvasListeners_.begin(), canvasListeners_.end(), l),
@@ -113,6 +118,7 @@ private:
     void drawPolygonCreationPreview(juce::Graphics& g);
     void drawPixelCreationPreview(juce::Graphics& g);
     void drawCursor(juce::Graphics& g);
+    void drawEditModeOverlay(juce::Graphics& g);
     void drawFingerOverlay(juce::Graphics& g);
     void drawCoordinateReadout(juce::Graphics& g);
 
@@ -136,6 +142,13 @@ private:
     void finishCreation();
     void undoPixelStroke();
     std::string nextShapeId();
+
+    // Edit-shape helpers
+    void syncEditCellsToShape();
+    void editAddCell(int cx, int cy);
+    void editRemoveCell(int cx, int cy);
+    HandlePos editHitTestHandle(juce::Point<float> screenPos) const;
+    juce::Rectangle<float> editBBoxScreen() const;
 
     // Grid snap
     float snapToGrid(float v) const { return std::round(v); }
@@ -206,6 +219,16 @@ private:
     // DAW feedback highlights
     std::set<std::string> highlightedShapes_;
     bool perFingerColors_ = true;
+
+    // Edit-shape mode state
+    std::string editingShapeId_;
+    std::unique_ptr<Shape> editOrigShape_;        // clone of shape before editing
+    std::set<std::pair<int,int>> editCells_;       // absolute grid coords of current cells
+    bool editConverted_ = false;                   // true if we auto-converted to PixelShape
+    HandlePos editDraggingHandle_ = HandlePos::None;
+    std::vector<std::set<std::pair<int,int>>> editSnapshots_; // cell snapshots for per-stroke undo
+    bool editSymmetryH_ = false;                   // horizontal mirror painting
+    bool editSymmetryV_ = false;                   // vertical mirror painting
 
     static constexpr float HandleSize = 8.0f;
 

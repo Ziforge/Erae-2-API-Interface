@@ -53,6 +53,21 @@ PropertyPanel::PropertyPanel(Layout& layout)
     addAndMakeVisible(channelLabel_);
     addAndMakeVisible(channelSlider_);
 
+    // MIDI Learn button
+    midiLearnBtn_.setTooltip("Capture note/CC from incoming MIDI");
+    midiLearnBtn_.onClick = [this] {
+        if (midiLearnBtn_.getButtonText() == "Cancel") {
+            midiLearnBtn_.setButtonText("Learn");
+            midiLearnBtn_.setColour(juce::TextButton::buttonColourId, Theme::Colors::ButtonBg);
+            for (auto* l : listeners_) l->midiLearnCancelled();
+        } else if (currentShape_) {
+            midiLearnBtn_.setButtonText("Cancel");
+            midiLearnBtn_.setColour(juce::TextButton::buttonColourId, Theme::Colors::Accent);
+            for (auto* l : listeners_) l->midiLearnRequested(currentShape_->id);
+        }
+    };
+    addAndMakeVisible(midiLearnBtn_);
+
     // Velocity slider (-1 to 127, -1 = auto)
     styleLabel(velocityLabel_);
     styleSlider(velocitySlider_, -1, 127, -1);
@@ -294,6 +309,8 @@ void PropertyPanel::resized()
 
     layoutRow(noteLabel_, noteSlider_);
     layoutRow(channelLabel_, channelSlider_);
+    midiLearnBtn_.setBounds(area.removeFromTop(rowH));
+    area.removeFromTop(3);
     layoutRow(velocityLabel_, velocitySlider_);
     layoutRow(ccLabel_, ccSlider_);
     layoutRow(ccXLabel_, ccXSlider_);
@@ -629,6 +646,7 @@ void PropertyPanel::updateVisibility()
     noteSlider_.setVisible(showNote);
     channelLabel_.setVisible(showChannel);
     channelSlider_.setVisible(showChannel);
+    midiLearnBtn_.setVisible(showNote || showCC || showCCXY);
     velocityLabel_.setVisible(showVelocity);
     velocitySlider_.setVisible(showVelocity);
     ccLabel_.setVisible(showCC);
@@ -787,6 +805,43 @@ void PropertyPanel::notifyListeners()
     if (!currentShape_) return;
     for (auto* l : listeners_)
         l->behaviorChanged(currentShape_->id);
+}
+
+void PropertyPanel::setMidiLearnActive(bool active)
+{
+    if (active) {
+        midiLearnBtn_.setButtonText("Cancel");
+        midiLearnBtn_.setColour(juce::TextButton::buttonColourId, Theme::Colors::Accent);
+    } else {
+        midiLearnBtn_.setButtonText("Learn");
+        midiLearnBtn_.setColour(juce::TextButton::buttonColourId, Theme::Colors::ButtonBg);
+    }
+}
+
+void PropertyPanel::applyMidiLearnResult(int note, int cc, int channel, bool isCC)
+{
+    if (!currentShape_) return;
+
+    loading_ = true;
+    channelSlider_.setValue(channel, juce::dontSendNotification);
+
+    auto btype = behaviorFromString(currentShape_->behavior);
+    if (isCC) {
+        // CC learned → apply to cc/ccX slider depending on behavior
+        if (btype == BehaviorType::Fader) {
+            ccSlider_.setValue(cc, juce::dontSendNotification);
+        } else if (btype == BehaviorType::XYController) {
+            ccXSlider_.setValue(cc, juce::dontSendNotification);
+        }
+    } else {
+        // Note learned → apply to note slider
+        noteSlider_.setValue(note, juce::dontSendNotification);
+    }
+    loading_ = false;
+
+    setMidiLearnActive(false);
+    writeParamsToShape();
+    notifyListeners();
 }
 
 } // namespace erae

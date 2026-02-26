@@ -34,7 +34,11 @@ private:
     EraeConnection& connection_;
     EraeProcessor* processor_ = nullptr;
     bool dirty_ = false;
+    bool forceFullFrame_ = true;  // first frame is always full
     std::map<std::string, WidgetState> lastWidgetStates_;
+
+    static constexpr int FBW = 42, FBH = 24;
+    uint8_t prevFb_[FBH][FBW][3] {};  // previous frame for diff
 };
 
 } // namespace erae

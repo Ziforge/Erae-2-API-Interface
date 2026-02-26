@@ -21,6 +21,7 @@ EraeRenderer::~EraeRenderer()
 void EraeRenderer::requestFullRedraw()
 {
     dirty_ = true;
+    forceFullFrame_ = true;
     if (!isTimerRunning())
         startTimer(50); // 20 fps max
 }
@@ -127,23 +128,50 @@ void EraeRenderer::timerCallback()
             }
         }
 
-        // Send framebuffer as drawImage — flip Y for hardware
-        // Hardware Y=0 is at bottom, software Y=0 is at top
-        std::vector<uint8_t> rgbData(W * H * 3);
-        for (int sy = 0; sy < H; ++sy) {
-            int hy = (H - 1) - sy;  // flip Y
-            for (int x = 0; x < W; ++x) {
-                int idx = (hy * W + x) * 3;
-                rgbData[idx + 0] = fb[sy][x][0];
-                rgbData[idx + 1] = fb[sy][x][1];
-                rgbData[idx + 2] = fb[sy][x][2];
-            }
+        // Differential rendering: count changed pixels
+        int changedCount = 0;
+        if (!forceFullFrame_) {
+            for (int y = 0; y < H; ++y)
+                for (int x = 0; x < W; ++x)
+                    if (fb[y][x][0] != prevFb_[y][x][0] ||
+                        fb[y][x][1] != prevFb_[y][x][1] ||
+                        fb[y][x][2] != prevFb_[y][x][2])
+                        ++changedCount;
         }
 
-        // drawImage overwrites all pixels — no need for clearZone
-        // (clearZone + drawImage causes visible black flash)
-        connection_.drawImage(0, 0, 0, W, H, rgbData);
+        // Use per-pixel updates when few pixels changed, full frame otherwise
+        static constexpr int DIFF_THRESHOLD = 200;  // ~20% of 1008 pixels
+        if (!forceFullFrame_ && changedCount > 0 && changedCount <= DIFF_THRESHOLD) {
+            // Send only changed pixels via drawPixel (Y-flipped)
+            for (int sy = 0; sy < H; ++sy) {
+                int hy = (H - 1) - sy;
+                for (int x = 0; x < W; ++x) {
+                    if (fb[sy][x][0] != prevFb_[sy][x][0] ||
+                        fb[sy][x][1] != prevFb_[sy][x][1] ||
+                        fb[sy][x][2] != prevFb_[sy][x][2]) {
+                        connection_.drawPixel(0, x, hy,
+                            fb[sy][x][0], fb[sy][x][1], fb[sy][x][2]);
+                    }
+                }
+            }
+        } else if (forceFullFrame_ || changedCount > 0) {
+            // Full frame: send drawImage (Y-flipped)
+            std::vector<uint8_t> rgbData(W * H * 3);
+            for (int sy = 0; sy < H; ++sy) {
+                int hy = (H - 1) - sy;
+                for (int x = 0; x < W; ++x) {
+                    int idx = (hy * W + x) * 3;
+                    rgbData[idx + 0] = fb[sy][x][0];
+                    rgbData[idx + 1] = fb[sy][x][1];
+                    rgbData[idx + 2] = fb[sy][x][2];
+                }
+            }
+            connection_.drawImage(0, 0, 0, W, H, rgbData);
+        }
 
+        // Store current frame for next diff comparison
+        std::memcpy(prevFb_, fb, sizeof(fb));
+        forceFullFrame_ = false;
         lastWidgetStates_ = widgetStates;
         dirty_ = false;
     }

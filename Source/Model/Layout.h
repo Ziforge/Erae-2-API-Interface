@@ -30,6 +30,7 @@ public:
     void resizeRect(const std::string& id, float newX, float newY, float newW, float newH);
     void resizeCircle(const std::string& id, float newCX, float newCY, float newR);
     void resizeHex(const std::string& id, float newCX, float newCY, float newR);
+    void replaceShape(const std::string& id, std::unique_ptr<Shape> newShape);
     void setShapeColor(const std::string& id, Color7 col, Color7 colActive);
     void setBehavior(const std::string& id, const std::string& behavior, juce::var params);
     Shape* hitTest(float x, float y) const;

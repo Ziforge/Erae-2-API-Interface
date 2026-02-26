@@ -147,7 +147,7 @@ public:
 
     static juce::File getDefaultLibraryFile()
     {
-        auto dir = juce::File::getSpecialLocation(juce::File::commonApplicationDataDirectory)
+        auto dir = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
                        .getChildFile("EraeShapeEditor");
         dir.createDirectory();
         return dir.getChildFile("library.json");

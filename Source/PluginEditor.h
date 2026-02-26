@@ -10,6 +10,7 @@
 #include "UI/PropertyPanel.h"
 #include "UI/Theme.h"
 #include "Core/ShapeLibrary.h"
+#include "Core/ShapeMorph.h"
 
 namespace erae {
 
@@ -31,6 +32,8 @@ public:
 
     // PropertyPanel::Listener
     void behaviorChanged(const std::string& shapeId) override;
+    void midiLearnRequested(const std::string& shapeId) override;
+    void midiLearnCancelled() override;
 
     // GridCanvas::Listener
     void selectionChanged() override;
@@ -99,6 +102,9 @@ private:
     Clipboard clipboard_;
     int shapeCounterRef_ = 0; // shared counter for clipboard paste
 
+    // MIDI learn target shape
+    std::string midiLearnShapeId_;
+
     // File chooser (must persist during async dialog)
     std::unique_ptr<juce::FileChooser> fileChooser_;
 
@@ -118,6 +124,12 @@ private:
     juce::TextButton distHBtn_        {"DH"};
     juce::TextButton distVBtn_        {"DV"};
     juce::Label alignLabel_           {"", "ALIGN"};
+
+    // Morph controls (shown when 2 shapes selected)
+    juce::Label morphLabel_          {"", "MORPH"};
+    juce::TextButton morphButton_    {"Create Morph"};
+    juce::Slider morphSlider_;
+    std::string morphIdA_, morphIdB_;  // source shapes for morphing
 
     // Status bar
     juce::Label statusLabel_;

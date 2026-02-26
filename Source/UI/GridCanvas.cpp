@@ -40,6 +40,10 @@ void GridCanvas::setToolMode(ToolMode mode)
     cancelPolygonCreation();
     cancelPixelCreation();
 
+    // Exit edit mode if switching away
+    if (!editingShapeId_.empty() && mode != ToolMode::EditShape)
+        exitEditMode(true);
+
     toolMode_ = mode;
     creating_ = false;
     painting_ = false;
@@ -52,7 +56,8 @@ void GridCanvas::setToolMode(ToolMode mode)
         case ToolMode::DrawCircle:
         case ToolMode::DrawHex:
         case ToolMode::DrawPoly:
-        case ToolMode::DrawPixel:  setMouseCursor(juce::MouseCursor::CrosshairCursor); break;
+        case ToolMode::DrawPixel:
+        case ToolMode::EditShape:  setMouseCursor(juce::MouseCursor::CrosshairCursor); break;
     }
     repaint();
 }
@@ -458,6 +463,230 @@ void GridCanvas::undoPixelStroke()
 }
 
 // ============================================================
+// Edit-shape mode
+// ============================================================
+
+void GridCanvas::enterEditMode(const std::string& shapeId)
+{
+    auto* s = layout_->getShape(shapeId);
+    if (!s) return;
+
+    editingShapeId_ = shapeId;
+    editOrigShape_ = s->clone();
+    editConverted_ = false;
+    editSymmetryH_ = false;
+    editSymmetryV_ = false;
+
+    // Load current pixels as absolute grid coords
+    editCells_.clear();
+    for (auto& [cx, cy] : s->gridPixels())
+        editCells_.insert({cx, cy});
+
+    // Save initial state as first snapshot
+    editSnapshots_.clear();
+    editSnapshots_.push_back(editCells_);
+
+    toolMode_ = ToolMode::EditShape;
+    selMgr_.select(shapeId);
+    setMouseCursor(juce::MouseCursor::CrosshairCursor);
+    repaint();
+}
+
+void GridCanvas::exitEditMode(bool commit)
+{
+    if (editingShapeId_.empty()) return;
+
+    if (commit && editOrigShape_) {
+        // Check if cells actually changed
+        std::set<std::pair<int,int>> origPixels;
+        for (auto& p : editOrigShape_->gridPixels())
+            origPixels.insert(p);
+
+        if (editCells_ != origPixels) {
+            if (editCells_.empty()) {
+                // All cells erased → revert to original
+                layout_->replaceShape(editingShapeId_, editOrigShape_->clone());
+            } else {
+                // Build final PixelShape from edited cells
+                auto it = editCells_.begin();
+                int minX = it->first, minY = it->second;
+                for (auto& [cx, cy] : editCells_) {
+                    minX = std::min(minX, cx);
+                    minY = std::min(minY, cy);
+                }
+                std::vector<std::pair<int,int>> relCells;
+                for (auto& [cx, cy] : editCells_)
+                    relCells.push_back({cx - minX, cy - minY});
+
+                auto newShape = std::make_unique<PixelShape>(editingShapeId_, (float)minX, (float)minY, std::move(relCells));
+                // Preserve visual properties from original
+                newShape->color = editOrigShape_->color;
+                newShape->colorActive = editOrigShape_->colorActive;
+                newShape->behavior = editOrigShape_->behavior;
+                newShape->behaviorParams = editOrigShape_->behaviorParams;
+                newShape->zOrder = editOrigShape_->zOrder;
+                newShape->visualStyle = editOrigShape_->visualStyle;
+                newShape->visualParams = editOrigShape_->visualParams;
+
+                undoMgr_.perform(std::make_unique<EditShapeAction>(
+                    *layout_, editOrigShape_->clone(), std::move(newShape)));
+            }
+        }
+    } else if (!commit) {
+        // Revert: restore original shape
+        if (editOrigShape_)
+            layout_->replaceShape(editingShapeId_, editOrigShape_->clone());
+    }
+
+    editingShapeId_.clear();
+    editOrigShape_.reset();
+    editCells_.clear();
+    editConverted_ = false;
+    editDraggingHandle_ = HandlePos::None;
+    editSnapshots_.clear();
+    editSymmetryH_ = false;
+    editSymmetryV_ = false;
+
+    toolMode_ = ToolMode::Select;
+    setMouseCursor(juce::MouseCursor::NormalCursor);
+    repaint();
+}
+
+void GridCanvas::syncEditCellsToShape()
+{
+    if (editingShapeId_.empty() || editCells_.empty()) return;
+
+    // Compute origin and relative cells
+    auto it = editCells_.begin();
+    int minX = it->first, minY = it->second;
+    for (auto& [cx, cy] : editCells_) {
+        minX = std::min(minX, cx);
+        minY = std::min(minY, cy);
+    }
+    std::vector<std::pair<int,int>> relCells;
+    for (auto& [cx, cy] : editCells_)
+        relCells.push_back({cx - minX, cy - minY});
+
+    auto* current = layout_->getShape(editingShapeId_);
+    if (!current) return;
+
+    // If not already a PixelShape, convert it
+    if (current->type != ShapeType::Pixel) {
+        auto newShape = std::make_unique<PixelShape>(editingShapeId_, (float)minX, (float)minY, std::move(relCells));
+        newShape->color = current->color;
+        newShape->colorActive = current->colorActive;
+        newShape->behavior = current->behavior;
+        newShape->behaviorParams = current->behaviorParams;
+        newShape->zOrder = current->zOrder;
+        newShape->visualStyle = current->visualStyle;
+        newShape->visualParams = current->visualParams;
+        layout_->replaceShape(editingShapeId_, std::move(newShape));
+        editConverted_ = true;
+    } else {
+        // Update existing PixelShape in-place
+        auto* pix = static_cast<PixelShape*>(current);
+        pix->x = (float)minX;
+        pix->y = (float)minY;
+        pix->relCells = std::move(relCells);
+        layout_->notifyListeners();
+    }
+}
+
+void GridCanvas::editAddCell(int cx, int cy)
+{
+    if (cx < 0 || cx >= Theme::GridW || cy < 0 || cy >= Theme::GridH) return;
+    editCells_.insert({cx, cy});
+
+    if (!editCells_.empty() && (editSymmetryH_ || editSymmetryV_)) {
+        // Compute bounding box center for mirror axis
+        auto eit = editCells_.begin();
+        int minX = eit->first, maxX = minX, minY = eit->second, maxY = minY;
+        for (auto& [x, y] : editCells_) {
+            minX = std::min(minX, x); maxX = std::max(maxX, x);
+            minY = std::min(minY, y); maxY = std::max(maxY, y);
+        }
+        if (editSymmetryH_) {
+            int mx = minX + maxX - cx;
+            if (mx >= 0 && mx < Theme::GridW)
+                editCells_.insert({mx, cy});
+        }
+        if (editSymmetryV_) {
+            int my = minY + maxY - cy;
+            if (my >= 0 && my < Theme::GridH)
+                editCells_.insert({cx, my});
+        }
+        if (editSymmetryH_ && editSymmetryV_) {
+            int mx = minX + maxX - cx;
+            int my = minY + maxY - cy;
+            if (mx >= 0 && mx < Theme::GridW && my >= 0 && my < Theme::GridH)
+                editCells_.insert({mx, my});
+        }
+    }
+}
+
+void GridCanvas::editRemoveCell(int cx, int cy)
+{
+    editCells_.erase({cx, cy});
+
+    if (!editCells_.empty() && (editSymmetryH_ || editSymmetryV_)) {
+        auto eit = editCells_.begin();
+        int minX = eit->first, maxX = minX, minY = eit->second, maxY = minY;
+        for (auto& [x, y] : editCells_) {
+            minX = std::min(minX, x); maxX = std::max(maxX, x);
+            minY = std::min(minY, y); maxY = std::max(maxY, y);
+        }
+        if (editSymmetryH_)
+            editCells_.erase({minX + maxX - cx, cy});
+        if (editSymmetryV_)
+            editCells_.erase({cx, minY + maxY - cy});
+        if (editSymmetryH_ && editSymmetryV_)
+            editCells_.erase({minX + maxX - cx, minY + maxY - cy});
+    }
+}
+
+juce::Rectangle<float> GridCanvas::editBBoxScreen() const
+{
+    if (editCells_.empty()) return {};
+    auto it = editCells_.begin();
+    int minX = it->first, minY = it->second;
+    int maxX = minX, maxY = minY;
+    for (auto& [cx, cy] : editCells_) {
+        minX = std::min(minX, cx);
+        minY = std::min(minY, cy);
+        maxX = std::max(maxX, cx);
+        maxY = std::max(maxY, cy);
+    }
+    return gridCellToScreen((float)minX, (float)minY, (float)(maxX - minX + 1), (float)(maxY - minY + 1));
+}
+
+HandlePos GridCanvas::editHitTestHandle(juce::Point<float> screenPos) const
+{
+    auto bb = editBBoxScreen();
+    if (bb.isEmpty()) return HandlePos::None;
+
+    float hs = HandleSize;
+    float hh = hs / 2;
+
+    struct { HandlePos pos; float hx, hy; } handles[] = {
+        {HandlePos::TopLeft,     bb.getX(),       bb.getY()},
+        {HandlePos::Top,         bb.getCentreX(), bb.getY()},
+        {HandlePos::TopRight,    bb.getRight(),   bb.getY()},
+        {HandlePos::Right,       bb.getRight(),   bb.getCentreY()},
+        {HandlePos::BottomRight, bb.getRight(),   bb.getBottom()},
+        {HandlePos::Bottom,      bb.getCentreX(), bb.getBottom()},
+        {HandlePos::BottomLeft,  bb.getX(),       bb.getBottom()},
+        {HandlePos::Left,        bb.getX(),       bb.getCentreY()},
+    };
+
+    for (auto& h : handles) {
+        auto hr = juce::Rectangle<float>(h.hx - hh, h.hy - hh, hs, hs).expanded(2);
+        if (hr.contains(screenPos))
+            return h.pos;
+    }
+    return HandlePos::None;
+}
+
+// ============================================================
 // Rendering
 // ============================================================
 
@@ -472,6 +701,7 @@ void GridCanvas::paint(juce::Graphics& g)
     drawCreationPreview(g);
     drawPolygonCreationPreview(g);
     drawPixelCreationPreview(g);
+    drawEditModeOverlay(g);
     drawCursor(g);
     drawCoordinateReadout(g);
 }
@@ -611,8 +841,8 @@ void GridCanvas::drawSelection(juce::Graphics& g)
         g.drawRect(r, 1.5f);
     }
 
-    // Draw handles only for single selection
-    if (ids.size() == 1) {
+    // Draw handles only for single selection (not in edit mode — edit mode draws its own)
+    if (ids.size() == 1 && editingShapeId_.empty()) {
         for (auto hp : allHandles()) {
             auto hr = getHandleRect(hp);
             g.setColour(Theme::Colors::HandleFill);
@@ -750,22 +980,104 @@ void GridCanvas::drawPixelCreationPreview(juce::Graphics& g)
     }
 }
 
+void GridCanvas::drawEditModeOverlay(juce::Graphics& g)
+{
+    if (editingShapeId_.empty()) return;
+
+    // Draw each cell with a highlighted border
+    auto cellCol = juce::Colour(100, 200, 255).withAlpha(0.15f);
+    auto borderCol = Theme::Colors::Accent.withAlpha(0.6f);
+
+    for (auto& [cx, cy] : editCells_) {
+        auto cellRect = gridCellToScreen((float)cx, (float)cy, 1.0f, 1.0f);
+        g.setColour(cellCol);
+        g.fillRect(cellRect);
+        g.setColour(borderCol);
+        g.drawRect(cellRect, 0.5f);
+    }
+
+    // Draw bounding box with resize handles
+    auto bb = editBBoxScreen();
+    if (!bb.isEmpty()) {
+        g.setColour(Theme::Colors::Selection);
+        g.drawRect(bb, 1.5f);
+
+        // Draw 8 resize handles
+        float hs = HandleSize;
+        float hh = hs / 2;
+        auto drawHandle = [&](float hx, float hy) {
+            auto hr = juce::Rectangle<float>(hx - hh, hy - hh, hs, hs);
+            g.setColour(Theme::Colors::HandleFill);
+            g.fillRoundedRectangle(hr, 2.0f);
+            g.setColour(Theme::Colors::HandleBorder);
+            g.drawRoundedRectangle(hr, 2.0f, 1.0f);
+        };
+        drawHandle(bb.getX(), bb.getY());                    // TopLeft
+        drawHandle(bb.getCentreX(), bb.getY());              // Top
+        drawHandle(bb.getRight(), bb.getY());                // TopRight
+        drawHandle(bb.getRight(), bb.getCentreY());          // Right
+        drawHandle(bb.getRight(), bb.getBottom());           // BottomRight
+        drawHandle(bb.getCentreX(), bb.getBottom());         // Bottom
+        drawHandle(bb.getX(), bb.getBottom());               // BottomLeft
+        drawHandle(bb.getX(), bb.getCentreY());              // Left
+    }
+
+    // Symmetry axis indicators
+    if (editSymmetryH_ || editSymmetryV_) {
+        auto bb = editBBoxScreen();
+        if (!bb.isEmpty()) {
+            float dashes[] = {6.0f, 4.0f};
+            juce::PathStrokeType dashStroke(1.0f);
+            g.setColour(juce::Colour(255, 200, 50).withAlpha(0.5f));
+            if (editSymmetryH_) {
+                juce::Path hLine;
+                hLine.startNewSubPath(bb.getCentreX(), bb.getY() - 8);
+                hLine.lineTo(bb.getCentreX(), bb.getBottom() + 8);
+                juce::Path dashedH;
+                dashStroke.createDashedStroke(dashedH, hLine, dashes, 2);
+                g.fillPath(dashedH);
+            }
+            if (editSymmetryV_) {
+                juce::Path vLine;
+                vLine.startNewSubPath(bb.getX() - 8, bb.getCentreY());
+                vLine.lineTo(bb.getRight() + 8, bb.getCentreY());
+                juce::Path dashedV;
+                dashStroke.createDashedStroke(dashedV, vLine, dashes, 2);
+                g.fillPath(dashedV);
+            }
+        }
+    }
+
+    // "Edit Mode" indicator text
+    juce::String editLabel = "EDIT SHAPE (ESC to finish)";
+    if (editSymmetryH_ || editSymmetryV_) {
+        editLabel += "  Mirror:";
+        if (editSymmetryH_) editLabel += " X";
+        if (editSymmetryV_) editLabel += " Y";
+    }
+    g.setFont(juce::Font(11.0f, juce::Font::bold));
+    g.setColour(Theme::Colors::Accent.withAlpha(0.8f));
+    g.drawText(editLabel, 6, 4, 320, 16, juce::Justification::centredLeft, false);
+}
+
 void GridCanvas::drawCursor(juce::Graphics& g)
 {
     if (toolMode_ != ToolMode::Paint && toolMode_ != ToolMode::Erase
-        && toolMode_ != ToolMode::DrawPixel) return;
+        && toolMode_ != ToolMode::DrawPixel && toolMode_ != ToolMode::EditShape) return;
     if (cursorGrid_.x < 0 || cursorGrid_.y < 0) return;
 
     int cx = (int)std::floor(cursorGrid_.x);
     int cy = (int)std::floor(cursorGrid_.y);
-    int half = brushSize_ / 2;
+    int bs = (toolMode_ == ToolMode::EditShape) ? 1 : brushSize_;
+    int half = bs / 2;
 
-    auto cursorCol = (toolMode_ == ToolMode::Paint || toolMode_ == ToolMode::DrawPixel)
+    auto cursorCol = (toolMode_ == ToolMode::Paint || toolMode_ == ToolMode::DrawPixel
+                      || toolMode_ == ToolMode::EditShape)
                      ? paintColor_.toJuceColour().withAlpha(0.3f)
                      : Theme::Colors::Error.withAlpha(0.25f);
 
-    for (int dy = -half; dy < brushSize_ - half; ++dy) {
-        for (int dx = -half; dx < brushSize_ - half; ++dx) {
+    for (int dy = -half; dy < bs - half; ++dy) {
+        for (int dx = -half; dx < bs - half; ++dx) {
             int px = cx + dx, py = cy + dy;
             if (px < 0 || px >= Theme::GridW || py < 0 || py >= Theme::GridH) continue;
             auto r = gridCellToScreen((float)px, (float)py);
@@ -927,6 +1239,74 @@ void GridCanvas::mouseDown(const juce::MouseEvent& e)
                 repaint();
                 break;
             }
+
+            // ---- EDIT SHAPE ----
+            case ToolMode::EditShape: {
+                if (editingShapeId_.empty()) break;
+
+                // Check resize handles first
+                auto hp = editHitTestHandle(e.position);
+                if (hp != HandlePos::None) {
+                    editDraggingHandle_ = hp;
+                    dragStartGrid_ = gridPos;
+                    currentDragId_ = ++dragIdCounter_;
+                    // Use edit cells bounding box
+                    if (!editCells_.empty()) {
+                        auto eit = editCells_.begin();
+                        int minX = eit->first, minY = eit->second;
+                        int maxX = minX, maxY = minY;
+                        for (auto& [cx, cy] : editCells_) {
+                            minX = std::min(minX, cx);
+                            minY = std::min(minY, cy);
+                            maxX = std::max(maxX, cx);
+                            maxY = std::max(maxY, cy);
+                        }
+                        dragStartX_ = (float)minX; dragStartY_ = (float)minY;
+                        dragStartW_ = (float)(maxX - minX + 1); dragStartH_ = (float)(maxY - minY + 1);
+                    }
+                    break;
+                }
+
+                // Check if click is far outside the edit bbox → exit
+                {
+                    auto ebb = editBBoxScreen();
+                    if (!ebb.isEmpty() && !ebb.expanded(Theme::CellSize * zoom_ * 3).contains(e.position)) {
+                        exitEditMode(true);
+                        break;
+                    }
+                }
+
+                // Left-click: add cell (with symmetry)
+                int ecx = (int)std::floor(gridPos.x), ecy = (int)std::floor(gridPos.y);
+                if (ecx >= 0 && ecx < Theme::GridW && ecy >= 0 && ecy < Theme::GridH) {
+                    editAddCell(ecx, ecy);
+                    syncEditCellsToShape();
+                }
+                break;
+            }
+        }
+    }
+    // Right-click erase in EditShape mode (with symmetry)
+    else if (e.mods.isRightButtonDown() && toolMode_ == ToolMode::EditShape) {
+        if (!editingShapeId_.empty()) {
+            int ecx = (int)std::floor(gridPos.x), ecy = (int)std::floor(gridPos.y);
+            editRemoveCell(ecx, ecy);
+            syncEditCellsToShape();
+        }
+    }
+    // Right-click in Select mode → context menu
+    else if (e.mods.isRightButtonDown() && toolMode_ == ToolMode::Select) {
+        auto* hit = layout_->hitTest(gridPos.x, gridPos.y);
+        if (hit) {
+            auto shapeId = hit->id;
+            juce::PopupMenu menu;
+            menu.addItem(1, "Edit Shape");
+            menu.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea(
+                juce::Rectangle<int>((int)e.getScreenX(), (int)e.getScreenY(), 1, 1)),
+                [this, shapeId](int result) {
+                    if (result == 1)
+                        enterEditMode(shapeId);
+                });
         }
     }
     // Right-click erase in paint mode
@@ -963,6 +1343,68 @@ void GridCanvas::mouseDrag(const juce::MouseEvent& e)
 
     auto gridPos = screenToGrid(e.position);
     cursorGrid_ = gridPos;
+
+    // Edit-shape handle resize drag
+    if (editDraggingHandle_ != HandlePos::None && !editingShapeId_.empty()) {
+        float dx = gridPos.x - dragStartGrid_.x;
+        float dy = gridPos.y - dragStartGrid_.y;
+
+        // Compute new bounding box from handle drag
+        float nx = dragStartX_, ny = dragStartY_;
+        float nw = dragStartW_, nh = dragStartH_;
+
+        switch (editDraggingHandle_) {
+            case HandlePos::TopLeft:     nx += dx; ny += dy; nw -= dx; nh -= dy; break;
+            case HandlePos::Top:         ny += dy; nh -= dy; break;
+            case HandlePos::TopRight:    ny += dy; nw += dx; nh -= dy; break;
+            case HandlePos::Right:       nw += dx; break;
+            case HandlePos::BottomRight: nw += dx; nh += dy; break;
+            case HandlePos::Bottom:      nh += dy; break;
+            case HandlePos::BottomLeft:  nx += dx; nw -= dx; nh += dy; break;
+            case HandlePos::Left:        nx += dx; nw -= dx; break;
+            default: break;
+        }
+
+        // Snap and enforce minimums
+        nx = snapToGrid(nx); ny = snapToGrid(ny);
+        nw = snapToGrid(nw); nh = snapToGrid(nh);
+        if (nw < 1.0f) nw = 1.0f;
+        if (nh < 1.0f) nh = 1.0f;
+
+        // Scale editCells_ to fit the new bounding box
+        if (!editCells_.empty()) {
+            auto oit = editCells_.begin();
+            int oldMinX = oit->first, oldMinY = oit->second;
+            int oldMaxX = oldMinX, oldMaxY = oldMinY;
+            for (auto& [cx, cy] : editCells_) {
+                oldMinX = std::min(oldMinX, cx);
+                oldMinY = std::min(oldMinY, cy);
+                oldMaxX = std::max(oldMaxX, cx);
+                oldMaxY = std::max(oldMaxY, cy);
+            }
+            float oldW = (float)(oldMaxX - oldMinX + 1);
+            float oldH = (float)(oldMaxY - oldMinY + 1);
+
+            if (oldW > 0 && oldH > 0) {
+                float scaleX = nw / oldW;
+                float scaleY = nh / oldH;
+
+                std::set<std::pair<int,int>> newCells;
+                for (auto& [cx, cy] : editCells_) {
+                    float relX = (float)(cx - oldMinX);
+                    float relY = (float)(cy - oldMinY);
+                    int newCX = (int)nx + (int)std::floor(relX * scaleX);
+                    int newCY = (int)ny + (int)std::floor(relY * scaleY);
+                    if (newCX >= 0 && newCX < Theme::GridW && newCY >= 0 && newCY < Theme::GridH)
+                        newCells.insert({newCX, newCY});
+                }
+                editCells_ = std::move(newCells);
+                syncEditCellsToShape();
+            }
+        }
+        repaint();
+        return;
+    }
 
     // Handle resize drag (single selection only)
     if (draggingHandle_ != HandlePos::None && selMgr_.count() == 1) {
@@ -1053,6 +1495,20 @@ void GridCanvas::mouseDrag(const juce::MouseEvent& e)
     if (creatingPoly_)
         polyRubberBand_ = juce::Point<float>(snapToGrid(gridPos.x), snapToGrid(gridPos.y));
 
+    // Edit-shape painting/erasing during drag (with symmetry)
+    if (toolMode_ == ToolMode::EditShape && !editingShapeId_.empty() && editDraggingHandle_ == HandlePos::None) {
+        int ecx = (int)std::floor(gridPos.x), ecy = (int)std::floor(gridPos.y);
+        if (ecx >= 0 && ecx < Theme::GridW && ecy >= 0 && ecy < Theme::GridH) {
+            if (e.mods.isLeftButtonDown()) {
+                editAddCell(ecx, ecy);
+                syncEditCellsToShape();
+            } else if (e.mods.isRightButtonDown()) {
+                editRemoveCell(ecx, ecy);
+                syncEditCellsToShape();
+            }
+        }
+    }
+
     // Pixel painting during drag
     if (toolMode_ == ToolMode::DrawPixel && (e.mods.isLeftButtonDown() || e.mods.isRightButtonDown())) {
         int cx = (int)std::floor(gridPos.x), cy = (int)std::floor(gridPos.y);
@@ -1081,6 +1537,7 @@ void GridCanvas::mouseUp(const juce::MouseEvent&)
     painting_ = false;
     draggingShape_ = false;
     draggingHandle_ = HandlePos::None;
+    editDraggingHandle_ = HandlePos::None;
     strokeCells_.clear();
     dragOrigins_.clear();
 
@@ -1101,6 +1558,12 @@ void GridCanvas::mouseUp(const juce::MouseEvent&)
         }
         currentStroke_.clear();
         pixelErasing_ = false;
+    }
+
+    // Save edit-shape snapshot for per-stroke undo
+    if (toolMode_ == ToolMode::EditShape && !editingShapeId_.empty()) {
+        if (editSnapshots_.empty() || editCells_ != editSnapshots_.back())
+            editSnapshots_.push_back(editCells_);
     }
 }
 
@@ -1142,6 +1605,28 @@ void GridCanvas::mouseMove(const juce::MouseEvent& e)
         }
     }
 
+    if (toolMode_ == ToolMode::EditShape && !editingShapeId_.empty()) {
+        // Show resize cursors over edit handles
+        auto hp = editHitTestHandle(e.position);
+        switch (hp) {
+            case HandlePos::TopLeft:
+            case HandlePos::BottomRight:
+                setMouseCursor(juce::MouseCursor::TopLeftCornerResizeCursor); break;
+            case HandlePos::TopRight:
+            case HandlePos::BottomLeft:
+                setMouseCursor(juce::MouseCursor::TopRightCornerResizeCursor); break;
+            case HandlePos::Top:
+            case HandlePos::Bottom:
+                setMouseCursor(juce::MouseCursor::UpDownResizeCursor); break;
+            case HandlePos::Left:
+            case HandlePos::Right:
+                setMouseCursor(juce::MouseCursor::LeftRightResizeCursor); break;
+            case HandlePos::None:
+                setMouseCursor(juce::MouseCursor::CrosshairCursor); break;
+        }
+        repaint();
+    }
+
     if (toolMode_ == ToolMode::Paint || toolMode_ == ToolMode::Erase
         || toolMode_ == ToolMode::DrawPixel)
         repaint();
@@ -1172,10 +1657,37 @@ bool GridCanvas::keyPressed(const juce::KeyPress& key)
         if (creatingPoly_ && polyVertices_.size() >= 3) { finishPolygonCreation(); return true; }
         if (creatingPixelShape_ && !pixelCells_.empty()) { finishPixelCreation(); return true; }
     }
-    // Escape → cancel poly/pixel creation
+    // Symmetry toggles in edit mode
+    if (!editingShapeId_.empty()) {
+        if (key.getTextCharacter() == 'x' || key.getTextCharacter() == 'X') {
+            editSymmetryH_ = !editSymmetryH_;
+            repaint();
+            return true;
+        }
+        if (key.getTextCharacter() == 'y' || key.getTextCharacter() == 'Y') {
+            editSymmetryV_ = !editSymmetryV_;
+            repaint();
+            return true;
+        }
+    }
+
+    // Escape → exit edit mode or cancel poly/pixel creation
     if (key == juce::KeyPress::escapeKey) {
+        if (!editingShapeId_.empty()) { exitEditMode(true); return true; }
         if (creatingPoly_)        { cancelPolygonCreation(); repaint(); return true; }
         if (creatingPixelShape_)  { cancelPixelCreation(); repaint(); return true; }
+    }
+
+    // Ctrl+Z in edit-shape mode → undo last stroke (per-stroke, before global undo)
+    if (key.getModifiers().isCommandDown() && key.getKeyCode() == 'Z'
+        && !key.getModifiers().isShiftDown() && !editingShapeId_.empty()) {
+        if (editSnapshots_.size() > 1) {
+            editSnapshots_.pop_back();
+            editCells_ = editSnapshots_.back();
+            syncEditCellsToShape();
+            repaint();
+        }
+        return true;
     }
 
     // Ctrl+Z in pixel mode → undo stroke (session-local, before global undo)

@@ -390,4 +390,37 @@ private:
     std::string name_;
 };
 
+// ============================================================
+// EditShapeAction — records entire before/after for edit-shape session
+// Stores clones so perform/undo are repeatable.
+// ============================================================
+class EditShapeAction : public UndoableAction {
+public:
+    EditShapeAction(Layout& layout, std::unique_ptr<Shape> oldShape, std::unique_ptr<Shape> newShape)
+        : layout_(layout), oldShape_(std::move(oldShape)), newShape_(std::move(newShape))
+    {
+        id_ = oldShape_ ? oldShape_->id : (newShape_ ? newShape_->id : "");
+    }
+
+    void perform() override
+    {
+        if (newShape_)
+            layout_.replaceShape(id_, newShape_->clone());
+    }
+
+    void undo() override
+    {
+        if (oldShape_)
+            layout_.replaceShape(id_, oldShape_->clone());
+    }
+
+    std::string getName() const override { return "Edit Shape"; }
+
+private:
+    Layout& layout_;
+    std::string id_;
+    std::unique_ptr<Shape> oldShape_;
+    std::unique_ptr<Shape> newShape_;
+};
+
 } // namespace erae

@@ -32,6 +32,18 @@ std::unique_ptr<Shape> Layout::extractShape(const std::string& id)
     return result;
 }
 
+void Layout::replaceShape(const std::string& id, std::unique_ptr<Shape> newShape)
+{
+    for (auto& s : shapes_) {
+        if (s->id == id) {
+            s = std::move(newShape);
+            sortByZOrder();
+            notifyListeners();
+            return;
+        }
+    }
+}
+
 void Layout::moveShape(const std::string& id, float newX, float newY)
 {
     if (auto* s = getShape(id)) {

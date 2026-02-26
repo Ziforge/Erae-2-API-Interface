@@ -49,6 +49,29 @@ void EraeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuf
     // Clear audio buffer (silence main channels)
     buffer.clear();
 
+    // MIDI learn: capture first note-on or CC from incoming MIDI
+    if (midiLearnActive_.load() && !midiLearnGot_.load()) {
+        for (const auto metadata : midiMessages) {
+            auto msg = metadata.getMessage();
+            if (msg.isNoteOn()) {
+                midiLearnNote_.store(msg.getNoteNumber());
+                midiLearnChannel_.store(msg.getChannel() - 1); // JUCE 1-based → 0-based
+                midiLearnIsCC_.store(false);
+                midiLearnGot_.store(true);
+                midiLearnActive_.store(false);
+                break;
+            }
+            if (msg.isController()) {
+                midiLearnCC_.store(msg.getControllerNumber());
+                midiLearnChannel_.store(msg.getChannel() - 1);
+                midiLearnIsCC_.store(true);
+                midiLearnGot_.store(true);
+                midiLearnActive_.store(false);
+                break;
+            }
+        }
+    }
+
     // Process incoming MIDI from DAW for feedback highlighting
     dawFeedback_.processIncomingMidi(midiMessages);
 

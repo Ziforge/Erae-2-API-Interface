@@ -43,6 +43,7 @@ target_sources(EraeShapeEditor
         Source/Core/LayoutActions.h
         Source/Core/Clipboard.h
         Source/Core/ShapeLibrary.h
+        Source/Core/ShapeMorph.h
         # Model
         Source/Model/Shape.h
         Source/Model/Layout.h

@@ -32,6 +32,18 @@ A JUCE-based visual layout editor and MIDI controller for the **Erae Touch II** 
 - **Polygon** - Arbitrary convex/concave polygons defined by vertices (used for parallelogram wings in the Buchla Thunder preset). Draw interactively with the **Poly** tool (P key): click vertices, double-click or Enter to close
 - **Pixel** - Freeform shapes built by painting individual grid cells. Use the **Pixel** tool (G key): left-click/drag to paint, right-click to erase, Ctrl+Z to undo last stroke, Enter to finalize into a single shape
 
+### Edit Shape Mode
+
+Right-click any shape in Select mode and choose **Edit Shape** to enter edit mode. This lets you modify an existing shape's geometry directly:
+
+- **Left-click/drag** to paint new cells onto the shape
+- **Right-click/drag** to erase cells from the shape
+- **Drag resize handles** (corners/edges) to scale the shape bigger or smaller
+- All three actions are available simultaneously — no mode switching needed
+- Non-pixel shapes (Rect, Circle, Hex, Polygon) are auto-converted to Pixel on first cell edit
+- **ESC** or click far outside the shape to exit edit mode
+- **Ctrl+Z** undoes the entire edit session in one step
+
 ## Visual Styles
 
 Each shape can have an independent visual style that animates on the hardware surface:
@@ -62,7 +74,8 @@ Each shape can have an independent visual style that animates on the hardware su
 | Delete / Backspace | Delete selection |
 | V / B / E / R / C / H / P / G | Select / Paint / Erase / Rect / Circle / Hex / Poly / Pixel tool |
 | Enter | Finalize polygon or pixel shape |
-| Escape | Cancel polygon or pixel creation |
+| Escape | Cancel polygon/pixel creation, or exit Edit Shape mode |
+| Right-click shape | Context menu with "Edit Shape" (in Select mode) |
 | Arrow keys | Nudge selected shapes (Shift = 5px) |
 | Scroll wheel | Zoom in/out |
 | Middle-click drag | Pan canvas |

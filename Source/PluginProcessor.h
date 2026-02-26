@@ -58,6 +58,16 @@ public:
     bool getPerFingerColors() const { return perFingerColors_; }
     void setPerFingerColors(bool en) { perFingerColors_ = en; }
 
+    // MIDI learn
+    void startMidiLearn()  { midiLearnActive_ = true; midiLearnGot_ = false; }
+    void cancelMidiLearn() { midiLearnActive_ = false; midiLearnGot_ = false; }
+    bool isMidiLearning() const { return midiLearnActive_; }
+    bool hasMidiLearnResult() const { return midiLearnGot_; }
+    int  getMidiLearnNote() const { return midiLearnNote_; }
+    int  getMidiLearnCC() const { return midiLearnCC_; }
+    int  getMidiLearnChannel() const { return midiLearnChannel_; }
+    bool getMidiLearnIsCC() const { return midiLearnIsCC_; }
+
     bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
 
     // EraeConnection::Listener
@@ -84,6 +94,14 @@ private:
     EraeRenderer renderer_;
 
     bool perFingerColors_ = false;
+
+    // MIDI learn state
+    std::atomic<bool> midiLearnActive_ {false};
+    std::atomic<bool> midiLearnGot_ {false};
+    std::atomic<bool> midiLearnIsCC_ {false};
+    std::atomic<int>  midiLearnNote_ {60};
+    std::atomic<int>  midiLearnCC_ {1};
+    std::atomic<int>  midiLearnChannel_ {0};
 
     // Finger → shape capture (finger stays on shape from DOWN through UP)
     std::map<uint64_t, std::string> fingerShapeMap_;

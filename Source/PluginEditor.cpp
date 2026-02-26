@@ -2,6 +2,7 @@
 #include "Model/Preset.h"
 #include "Core/LayoutActions.h"
 #include "Core/AlignmentTools.h"
+#include "Core/ShapeMorph.h"
 
 namespace erae {
 
@@ -320,6 +321,47 @@ EraeEditor::EraeEditor(EraeProcessor& p)
 
     showAlignmentButtons(false);
 
+    // --- Sidebar: Morph controls ---
+    morphLabel_.setFont(juce::Font(Theme::FontSection, juce::Font::bold));
+    morphLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
+    addAndMakeVisible(morphLabel_);
+
+    morphSlider_.setRange(0.0, 1.0, 0.01);
+    morphSlider_.setValue(0.5, juce::dontSendNotification);
+    morphSlider_.setSliderStyle(juce::Slider::LinearBar);
+    morphSlider_.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 40, 20);
+    morphSlider_.setColour(juce::Slider::trackColourId, Theme::Colors::Accent);
+    morphSlider_.setColour(juce::Slider::textBoxTextColourId, Theme::Colors::Text);
+    addAndMakeVisible(morphSlider_);
+
+    morphButton_.setTooltip("Create a morphed shape between two selected shapes");
+    morphButton_.onClick = [this] {
+        auto& ids = selectionManager_.getSelectedIds();
+        if (ids.size() != 2) return;
+        auto it = ids.begin();
+        auto* shapeA = processor_.getLayout().getShape(*it++);
+        auto* shapeB = processor_.getLayout().getShape(*it);
+        if (!shapeA || !shapeB) return;
+
+        float t = (float)morphSlider_.getValue();
+        auto newId = "morph_" + std::to_string(++shapeCounterRef_);
+        auto morphed = ShapeMorph::morph(*shapeA, *shapeB, t, newId);
+        if (morphed) {
+            morphed->behavior = shapeA->behavior;
+            morphed->behaviorParams = shapeA->behaviorParams;
+            morphed->visualStyle = shapeA->visualStyle;
+            morphed->visualParams = shapeA->visualParams;
+            processor_.getUndoManager().perform(
+                std::make_unique<AddShapeAction>(processor_.getLayout(), std::move(morphed)));
+            selectionManager_.select(newId);
+        }
+    };
+    addAndMakeVisible(morphButton_);
+
+    morphLabel_.setVisible(false);
+    morphSlider_.setVisible(false);
+    morphButton_.setVisible(false);
+
     // --- Sidebar: Shape Library ---
     libLabel_.setFont(juce::Font(Theme::FontSection, juce::Font::bold));
     libLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
@@ -605,6 +647,14 @@ void EraeEditor::resized()
         alignRow2.removeFromLeft(Theme::SpaceXS);
         distVBtn_.setBounds(alignRow2);
     }
+    sidebar.removeFromTop(Theme::SpaceSM);
+
+    // Morph section (shown when 2 shapes selected)
+    morphLabel_.setBounds(sidebar.removeFromTop(18));
+    sidebar.removeFromTop(3);
+    morphSlider_.setBounds(sidebar.removeFromTop(24));
+    sidebar.removeFromTop(3);
+    morphButton_.setBounds(sidebar.removeFromTop(24));
     sidebar.removeFromTop(Theme::SpaceLG);
 
     // Shape Library section
@@ -730,6 +780,18 @@ void EraeEditor::behaviorChanged(const std::string& shapeId)
     }
 }
 
+void EraeEditor::midiLearnRequested(const std::string& shapeId)
+{
+    midiLearnShapeId_ = shapeId;
+    processor_.startMidiLearn();
+}
+
+void EraeEditor::midiLearnCancelled()
+{
+    midiLearnShapeId_.clear();
+    processor_.cancelMidiLearn();
+}
+
 // ============================================================
 // Canvas selection callback
 // ============================================================
@@ -746,6 +808,11 @@ void EraeEditor::selectionChanged()
 
     auto singleId = selectionManager_.getSingleSelectedId();
     bool multi = selectionManager_.count() > 1;
+
+    bool showMorph = (selectionManager_.count() == 2);
+    morphLabel_.setVisible(showMorph);
+    morphSlider_.setVisible(showMorph);
+    morphButton_.setVisible(showMorph);
 
     if (!singleId.empty()) {
         auto* s = processor_.getLayout().getShape(singleId);
@@ -934,6 +1001,7 @@ void EraeEditor::updateStatus()
         case ToolMode::DrawHex:    modeName = "Draw Hex"; break;
         case ToolMode::DrawPoly:   modeName = "Draw Poly"; break;
         case ToolMode::DrawPixel:  modeName = "Draw Pixel"; break;
+        case ToolMode::EditShape:  modeName = "Edit Shape"; break;
     }
 
     auto& conn = processor_.getConnection();
@@ -987,6 +1055,16 @@ void EraeEditor::timerCallback()
         canvas_.setHighlightedShapes(daw.getHighlightedShapes());
     else
         canvas_.setHighlightedShapes({});
+
+    // MIDI learn: poll for result and apply to target shape
+    if (!midiLearnShapeId_.empty() && processor_.hasMidiLearnResult()) {
+        propertyPanel_.applyMidiLearnResult(
+            processor_.getMidiLearnNote(),
+            processor_.getMidiLearnCC(),
+            processor_.getMidiLearnChannel(),
+            processor_.getMidiLearnIsCC());
+        midiLearnShapeId_.clear();
+    }
 
     updateConnectButton();
 }

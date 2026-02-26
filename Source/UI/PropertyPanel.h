@@ -18,6 +18,8 @@ public:
     public:
         virtual ~Listener() = default;
         virtual void behaviorChanged(const std::string& shapeId) = 0;
+        virtual void midiLearnRequested(const std::string& shapeId) {}
+        virtual void midiLearnCancelled() {}
     };
 
     PropertyPanel(Layout& layout);
@@ -27,6 +29,8 @@ public:
 
     void loadShape(Shape* shape);
     void clearShape();
+    void setMidiLearnActive(bool active);
+    void applyMidiLearnResult(int note, int cc, int channel, bool isCC);
 
     void addListener(Listener* l) { listeners_.push_back(l); }
     void removeListener(Listener* l) {
@@ -67,6 +71,8 @@ private:
     juce::ToggleButton highresToggle_;
     juce::Label slideCCLabel_   {"", "Slide CC"};
     juce::Slider slideCCSlider_;
+
+    juce::TextButton midiLearnBtn_ {"Learn"};
 
     juce::Label mpeHint_        {"", "(MPE: pitch-X, slide-Y, pressure-Z)"};
 
