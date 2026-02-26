@@ -5,7 +5,7 @@ project(EraeShapeEditor VERSION 1.0.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# JUCE via FetchContent (same pattern as Gateless Gate VST)
+# JUCE via FetchContent
 include(FetchContent)
 FetchContent_Declare(
     JUCE
