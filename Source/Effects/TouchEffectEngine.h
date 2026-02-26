@@ -36,7 +36,7 @@ public:
 private:
     void updateTrail(ShapeEffectState& st, const EffectParams& p, float dt);
     void updateRipple(ShapeEffectState& st, const EffectParams& p, float dt);
-    void updateParticles(ShapeEffectState& st, const EffectParams& p, float dt);
+    void updateParticles(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt);
     void updatePulse(ShapeEffectState& st, const EffectParams& p, float dt);
     void updateBreathe(ShapeEffectState& st, const EffectParams& p, float dt);
     void updateSpin(ShapeEffectState& st, const EffectParams& p, float dt);
@@ -49,14 +49,14 @@ private:
     void updateFluid(ShapeEffectState& st, const EffectParams& p, float dt);
     void updateSpringLattice(ShapeEffectState& st, const EffectParams& p, float dt);
     void updatePendulum(ShapeEffectState& st, const EffectParams& p, float dt);
-    void updateCollision(ShapeEffectState& st, const EffectParams& p, float dt);
+    void updateCollision(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt);
     void updateTombolo(ShapeEffectState& st, const EffectParams& p, float dt);
-    void updateGravityWell(ShapeEffectState& st, const EffectParams& p, float dt);
+    void updateGravityWell(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt);
     void updateElasticBand(ShapeEffectState& st, const EffectParams& p, float dt);
     void updateBow(ShapeEffectState& st, const EffectParams& p, float dt);
     void updateWaveInterference(ShapeEffectState& st, const EffectParams& p, float dt);
 
-    static void initGridForShape(GridField& gf, int w = 42, int h = 24);
+    static void initGridForShape(GridField& gf, const BBox& bb);
 
     static std::vector<std::pair<float,float>> computeConvexHull(
         const std::vector<BoundaryFinger>& fingers);
@@ -76,8 +76,9 @@ private:
     OscOutput* oscOutput_  = nullptr;
     CVOutput* cvOutput_    = nullptr;
 
-    // Store params per shape so advanceFrame doesn't need Shape* pointers
+    // Store params and bbox per shape so advanceFrame doesn't need Shape* pointers
     std::map<std::string, EffectParams> paramsCache_;
+    std::map<std::string, BBox> bboxCache_;
 };
 
 } // namespace erae

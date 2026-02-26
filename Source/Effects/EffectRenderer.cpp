@@ -229,8 +229,12 @@ std::vector<EffectPixel> renderEffects(
                     for (int x = 0; x < ms.displacement.width; ++x) {
                         float val = std::abs(ms.displacement.get(x, y));
                         if (val > 0.01f) {
-                            float alpha = std::min(1.0f, val * 0.5f) * p.intensity;
-                            pixels.push_back({x, y, baseColor, alpha});
+                            int absX = x + (int)std::round(st.gridOriginX);
+                            int absY = y + (int)std::round(st.gridOriginY);
+                            if (absX >= 0 && absX < 42 && absY >= 0 && absY < 24) {
+                                float alpha = std::min(1.0f, val * 0.5f) * p.intensity;
+                                pixels.push_back({absX, absY, baseColor, alpha});
+                            }
                         }
                     }
                 break;
@@ -242,8 +246,12 @@ std::vector<EffectPixel> renderEffects(
                     for (int x = 0; x < fs.density.width; ++x) {
                         float d = fs.density.get(x, y);
                         if (d > 0.01f) {
-                            float alpha = std::min(1.0f, d) * p.intensity;
-                            pixels.push_back({x, y, baseColor, alpha});
+                            int absX = x + (int)std::round(st.gridOriginX);
+                            int absY = y + (int)std::round(st.gridOriginY);
+                            if (absX >= 0 && absX < 42 && absY >= 0 && absY < 24) {
+                                float alpha = std::min(1.0f, d) * p.intensity;
+                                pixels.push_back({absX, absY, baseColor, alpha});
+                            }
                         }
                     }
                 break;
@@ -256,8 +264,12 @@ std::vector<EffectPixel> renderEffects(
                     for (int x = 0; x < sp.displacement.width; x += 2) {
                         float val = std::abs(sp.displacement.get(x, y));
                         if (val > 0.01f) {
-                            float alpha = std::min(1.0f, val * 0.8f + 0.2f) * p.intensity;
-                            pixels.push_back({x, y, baseColor, alpha});
+                            int absX = x + (int)std::round(st.gridOriginX);
+                            int absY = y + (int)std::round(st.gridOriginY);
+                            if (absX >= 0 && absX < 42 && absY >= 0 && absY < 24) {
+                                float alpha = std::min(1.0f, val * 0.8f + 0.2f) * p.intensity;
+                                pixels.push_back({absX, absY, baseColor, alpha});
+                            }
                         }
                     }
                 break;
@@ -315,8 +327,12 @@ std::vector<EffectPixel> renderEffects(
                     for (int x = 0; x < ts.height.width; ++x) {
                         float h = ts.height.get(x, y);
                         if (h > 0.05f) {
-                            float alpha = std::min(1.0f, h * 0.25f) * p.intensity;
-                            pixels.push_back({x, y, baseColor, alpha});
+                            int absX = x + (int)std::round(st.gridOriginX);
+                            int absY = y + (int)std::round(st.gridOriginY);
+                            if (absX >= 0 && absX < 42 && absY >= 0 && absY < 24) {
+                                float alpha = std::min(1.0f, h * 0.25f) * p.intensity;
+                                pixels.push_back({absX, absY, baseColor, alpha});
+                            }
                         }
                     }
                 break;
@@ -377,8 +393,12 @@ std::vector<EffectPixel> renderEffects(
                     for (int x = 0; x < ws.field.width; ++x) {
                         float val = (1.0f + ws.field.get(x, y)) * 0.5f; // normalize -1..1 to 0..1
                         if (val > 0.05f) {
-                            float alpha = val * p.intensity;
-                            pixels.push_back({x, y, baseColor, std::min(1.0f, alpha)});
+                            int absX = x + (int)std::round(st.gridOriginX);
+                            int absY = y + (int)std::round(st.gridOriginY);
+                            if (absX >= 0 && absX < 42 && absY >= 0 && absY < 24) {
+                                float alpha = val * p.intensity;
+                                pixels.push_back({absX, absY, baseColor, std::min(1.0f, alpha)});
+                            }
                         }
                     }
                 break;
@@ -583,7 +603,7 @@ void drawEffects(
                     for (int x = 0; x < ms.displacement.width; ++x) {
                         float val = std::abs(ms.displacement.get(x,y));
                         if (val > 0.01f) {
-                            auto screen = gridToScreen({(float)x, (float)y});
+                            auto screen = gridToScreen({(float)x + st.gridOriginX, (float)y + st.gridOriginY});
                             float alpha = std::min(1.0f, val*0.5f) * p.intensity;
                             g.setColour(juceColor.withAlpha(alpha));
                             g.fillRect(screen.x-cellPx*0.5f, screen.y-cellPx*0.5f, cellPx, cellPx);
@@ -598,7 +618,7 @@ void drawEffects(
                     for (int x = 0; x < fs.density.width; ++x) {
                         float d = fs.density.get(x,y);
                         if (d > 0.01f) {
-                            auto screen = gridToScreen({(float)x, (float)y});
+                            auto screen = gridToScreen({(float)x + st.gridOriginX, (float)y + st.gridOriginY});
                             float alpha = std::min(1.0f, d) * p.intensity;
                             g.setColour(juceColor.withAlpha(alpha));
                             g.fillRect(screen.x-cellPx*0.5f, screen.y-cellPx*0.5f, cellPx, cellPx);
@@ -613,7 +633,7 @@ void drawEffects(
                     for (int x = 0; x < sp.displacement.width; x += 2) {
                         float val = std::abs(sp.displacement.get(x,y));
                         if (val > 0.01f) {
-                            auto screen = gridToScreen({(float)x, (float)y});
+                            auto screen = gridToScreen({(float)x + st.gridOriginX, (float)y + st.gridOriginY});
                             float size = cellPx * (0.3f + val * 0.5f);
                             g.setColour(juceColor.withAlpha(std::min(1.0f, val*0.8f+0.2f)*p.intensity));
                             g.fillEllipse(screen.x-size*0.5f, screen.y-size*0.5f, size, size);
@@ -668,7 +688,7 @@ void drawEffects(
                     for (int x = 0; x < ts.height.width; ++x) {
                         float h = ts.height.get(x,y);
                         if (h > 0.05f) {
-                            auto screen = gridToScreen({(float)x, (float)y});
+                            auto screen = gridToScreen({(float)x + st.gridOriginX, (float)y + st.gridOriginY});
                             float alpha = std::min(1.0f, h*0.25f) * p.intensity;
                             g.setColour(juceColor.withAlpha(alpha));
                             g.fillRect(screen.x-cellPx*0.5f, screen.y-cellPx*0.5f, cellPx, cellPx);
@@ -735,15 +755,15 @@ void drawEffects(
                     for (int x = 0; x < ws.field.width; ++x) {
                         float val = (1.0f + ws.field.get(x,y)) * 0.5f;
                         if (val > 0.05f) {
-                            auto screen = gridToScreen({(float)x, (float)y});
+                            auto screen = gridToScreen({(float)x + st.gridOriginX, (float)y + st.gridOriginY});
                             float alpha = std::min(1.0f, val) * p.intensity;
                             g.setColour(juceColor.withAlpha(alpha));
                             g.fillRect(screen.x-cellPx*0.5f, screen.y-cellPx*0.5f, cellPx, cellPx);
                         }
                     }
-                // Draw source markers
+                // Draw source markers (src coords are shape-local)
                 for (auto& src : ws.sources) {
-                    auto screen = gridToScreen({src.x, src.y});
+                    auto screen = gridToScreen({src.x + st.gridOriginX, src.y + st.gridOriginY});
                     g.setColour(juceColor.withAlpha(p.intensity));
                     g.drawEllipse(screen.x-cellPx, screen.y-cellPx, cellPx*2, cellPx*2, 1.5f);
                 }

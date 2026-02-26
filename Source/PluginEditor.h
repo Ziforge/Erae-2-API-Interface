@@ -187,8 +187,12 @@ private:
     juce::TextButton libPlaceBtn_  {"Place"};
     juce::TextButton libFlipHBtn_  {"Flip H"};
     juce::TextButton libFlipVBtn_  {"Flip V"};
+    juce::TextButton libDupeBtn_   {"Dupe"};
     juce::TextButton libDeleteBtn_ {"Del"};
     juce::Label libLabel_          {"", "SHAPE LIBRARY"};
+    juce::Label libDescLabel_;     // effect description text
+    int libPreviewRow_ = -1;       // selected library row for preview (-1 = none)
+    juce::Rectangle<int> libPreviewBounds_;  // preview drawing area (set in resized)
 
     // Sidebar — selection info (always visible at bottom)
     juce::Label selectionLabel_;
@@ -199,18 +203,31 @@ private:
     // Library list model
     struct LibraryListModel : public juce::ListBoxModel {
         ShapeLibrary* library = nullptr;
+        std::function<void(int)> onSelectionChanged;
         int getNumRows() override { return library ? library->numEntries() : 0; }
         void paintListBoxItem(int row, juce::Graphics& g, int w, int h, bool selected) override
         {
             if (!library || row < 0 || row >= library->numEntries()) return;
+            bool builtin = library->isBuiltin(row);
+            if (builtin) {
+                g.setColour(Theme::Colors::Accent.withAlpha(0.08f));
+                g.fillRect(0, 0, w, h);
+            }
             if (selected) {
                 g.setColour(Theme::Colors::Accent.withAlpha(0.3f));
                 g.fillRect(0, 0, w, h);
             }
             g.setColour(Theme::Colors::Text);
             g.setFont(juce::Font(Theme::FontBase));
-            g.drawText(library->getEntry(row).name, 4, 0, w - 8, h,
+            auto label = builtin
+                ? juce::String(juce::CharPointer_UTF8("\xe2\x9a\xa1 ")) + library->getEntry(row).name
+                : juce::String(library->getEntry(row).name);
+            g.drawText(label, 4, 0, w - 8, h,
                        juce::Justification::centredLeft, true);
+        }
+        void selectedRowsChanged(int lastRowSelected) override
+        {
+            if (onSelectionChanged) onSelectionChanged(lastRowSelected);
         }
     };
     LibraryListModel libraryListModel_;
@@ -235,6 +252,7 @@ private:
     void clearCV();
     void writeCVToShape();
     void layoutShapeTabContent(int contentWidth);
+    void updateLibraryPreview(int row);
     int designShapeCounter_ = 0;
     Shape* cvCurrentShape_ = nullptr;
     bool cvLoading_ = false;

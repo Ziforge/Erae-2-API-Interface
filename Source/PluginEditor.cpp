@@ -525,11 +525,24 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     addAndMakeVisible(libLabel_);
 
     libraryListModel_.library = &library_;
+    libraryListModel_.onSelectionChanged = [this](int row) {
+        updateLibraryPreview(row);
+    };
     libraryList_.setModel(&libraryListModel_);
     libraryList_.setRowHeight(20);
     libraryList_.setColour(juce::ListBox::backgroundColourId, Theme::Colors::ButtonBg);
     libraryList_.setColour(juce::ListBox::outlineColourId, Theme::Colors::Separator);
     addAndMakeVisible(libraryList_);
+
+    // Library preview components
+    libDescLabel_.setFont(juce::Font(Theme::FontSmall));
+    libDescLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
+    libDescLabel_.setJustificationType(juce::Justification::topLeft);
+    libDescLabel_.setMinimumHorizontalScale(1.0f);
+    addAndMakeVisible(libDescLabel_);
+    libDescLabel_.setVisible(false);
+
+    // libPreviewRow_ / libPreviewBounds_ used for preview — no child component needed.
 
     libSaveBtn_.setTooltip("Save selected canvas shape to library");
     libSaveBtn_.onClick = [this] {
@@ -579,10 +592,23 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     };
     addAndMakeVisible(libFlipVBtn_);
 
+    libDupeBtn_.setTooltip("Duplicate selected entry as user shape");
+    libDupeBtn_.onClick = [this] {
+        int row = libraryList_.getSelectedRow();
+        if (row < 0 || row >= library_.numEntries()) return;
+        auto& entry = library_.getEntry(row);
+        auto name = entry.name + " (copy)";
+        library_.addEntry(name, entry.shape.get());
+        library_.save(ShapeLibrary::getDefaultLibraryFile());
+        libraryList_.updateContent();
+        libraryList_.repaint();
+    };
+    addAndMakeVisible(libDupeBtn_);
+
     libDeleteBtn_.setTooltip("Remove entry from library");
     libDeleteBtn_.onClick = [this] {
         int row = libraryList_.getSelectedRow();
-        if (row < 0) return;
+        if (row < 0 || library_.isBuiltin(row)) return;
         library_.removeEntry(row);
         library_.save(ShapeLibrary::getDefaultLibraryFile());
         libraryList_.updateContent();
@@ -668,6 +694,56 @@ void EraeEditor::paint(juce::Graphics& g)
     // Status bar top separator
     g.setColour(Theme::Colors::Separator);
     g.fillRect(0, contentBottom, getWidth(), 1);
+
+    // Library preview swatch — reads shape directly from library
+    if (libPreviewRow_ >= 0 && libPreviewRow_ < library_.numEntries()) {
+        auto pb = libPreviewBounds_.toFloat().reduced(2.0f);
+        auto& entry = library_.getEntry(libPreviewRow_);
+        auto* shape = entry.shape.get();
+        auto fillCol = shape->color.toJuceColour();
+        auto outlineCol = Theme::Colors::Text.withAlpha(0.3f);
+        float pcx = pb.getCentreX();
+        float pcy = pb.getCentreY();
+
+        if (shape->type == ShapeType::Circle) {
+            float rad = std::min(pb.getWidth(), pb.getHeight()) / 2.0f;
+            g.setColour(fillCol);
+            g.fillEllipse(pcx - rad, pcy - rad, rad * 2, rad * 2);
+            g.setColour(outlineCol);
+            g.drawEllipse(pcx - rad, pcy - rad, rad * 2, rad * 2, 1.0f);
+        } else if (shape->type == ShapeType::Hex) {
+            float rad = std::min(pb.getWidth(), pb.getHeight()) / 2.0f;
+            juce::Path hex;
+            for (int i = 0; i < 6; ++i) {
+                float a = (float)i * 1.0472f - 0.5236f;
+                float px = pcx + rad * std::cos(a);
+                float py = pcy + rad * std::sin(a);
+                if (i == 0) hex.startNewSubPath(px, py);
+                else hex.lineTo(px, py);
+            }
+            hex.closeSubPath();
+            g.setColour(fillCol);
+            g.fillPath(hex);
+            g.setColour(outlineCol);
+            g.strokePath(hex, juce::PathStrokeType(1.0f));
+        } else {
+            // Rectangle — fit to preview box preserving aspect ratio
+            auto bb = shape->bbox();
+            float sw = bb.xMax - bb.xMin;
+            float sh = bb.yMax - bb.yMin;
+            if (sw < 1) sw = 1;
+            if (sh < 1) sh = 1;
+            float scale = std::min(pb.getWidth() / sw, pb.getHeight() / sh);
+            float rw = sw * scale;
+            float rh = sh * scale;
+            float rx = pcx - rw / 2.0f;
+            float ry = pcy - rh / 2.0f;
+            g.setColour(fillCol);
+            g.fillRoundedRectangle(rx, ry, rw, rh, 2.0f);
+            g.setColour(outlineCol);
+            g.drawRoundedRectangle(rx, ry, rw, rh, 2.0f, 1.0f);
+        }
+    }
 
     // Toolbar group separators
     drawToolbarSeparators(g);
@@ -812,8 +888,28 @@ void EraeEditor::resized()
         libLabel_.setBounds(content.removeFromTop(18));
         content.removeFromTop(3);
 
+        // Effect panel at bottom (when a canvas shape is selected)
+        bool hasShape = !selectionManager_.getSingleSelectedId().empty();
+        if (hasShape) {
+            auto effectArea = content.removeFromBottom(std::min(content.getHeight() / 2, 280));
+            content.removeFromBottom(3);
+            effectPanel_.setBounds(effectArea);
+        }
+
         int btnAreaH = 24 + 3 + 24;
         auto btnArea = content.removeFromBottom(btnAreaH);
+
+        // Preview area (between list and buttons, when built-in selected)
+        if (libPreviewRow_ >= 0) {
+            content.removeFromBottom(3);
+            auto previewArea = content.removeFromBottom(100);
+            // Shape preview on top (full width, 40px tall)
+            auto shapeRow = previewArea.removeFromTop(44);
+            libPreviewBounds_ = shapeRow.reduced(2);
+            // Description text below
+            previewArea.removeFromTop(2);
+            libDescLabel_.setBounds(previewArea);
+        }
 
         libraryList_.setBounds(content);
 
@@ -829,10 +925,12 @@ void EraeEditor::resized()
         btnArea.removeFromTop(3);
         {
             auto btnRow2 = btnArea.removeFromTop(24);
-            int lbw = (btnRow2.getWidth() - Theme::SpaceXS) / 2;
+            int lbw = (btnRow2.getWidth() - 2 * Theme::SpaceXS) / 3;
             libFlipHBtn_.setBounds(btnRow2.removeFromLeft(lbw));
             btnRow2.removeFromLeft(Theme::SpaceXS);
-            libFlipVBtn_.setBounds(btnRow2);
+            libFlipVBtn_.setBounds(btnRow2.removeFromLeft(lbw));
+            btnRow2.removeFromLeft(Theme::SpaceXS);
+            libDupeBtn_.setBounds(btnRow2);
         }
     }
 
@@ -904,11 +1002,6 @@ void EraeEditor::resized()
         }
     }
 
-    // ===== Effects Tab =====
-    if (activeTab == SidebarTabBar::Effects) {
-        effectPanel_.setBounds(tabContent);
-    }
-
     // ===== Canvas =====
     area.reduce(2, 2);
     canvas_.setBounds(area);
@@ -917,6 +1010,42 @@ void EraeEditor::resized()
 // ============================================================
 // Shape tab content layout (inside scrollable viewport)
 // ============================================================
+
+void EraeEditor::updateLibraryPreview(int row)
+{
+    if (row < 0 || row >= library_.numEntries()) {
+        libDescLabel_.setVisible(false);
+        libPreviewRow_ = -1;
+        resized();
+        repaint();
+        return;
+    }
+
+    auto& entry = library_.getEntry(row);
+    auto bb = entry.shape->bbox();
+    float w = bb.xMax - bb.xMin;
+    float h = bb.yMax - bb.yMin;
+
+    juce::String sizeStr;
+    if (entry.shape->type == ShapeType::Circle || entry.shape->type == ShapeType::Hex)
+        sizeStr = "r=" + juce::String((int)(w / 2.0f));
+    else
+        sizeStr = juce::String((int)w) + "x" + juce::String((int)h);
+
+    juce::String text;
+    text += juce::String(entry.name) + "  (" + sizeStr + ")\n";
+    if (!entry.description.empty())
+        text += juce::String(entry.description);
+    else
+        text += "User-saved shape";
+    libDescLabel_.setText(text, juce::dontSendNotification);
+    libDescLabel_.setVisible(true);
+
+    libPreviewRow_ = row;
+
+    resized();
+    repaint();
+}
 
 void EraeEditor::layoutShapeTabContent(int contentWidth)
 {
@@ -1065,7 +1194,10 @@ void EraeEditor::showTabContent(SidebarTabBar::Tab tab)
     libPlaceBtn_.setVisible(false);
     libFlipHBtn_.setVisible(false);
     libFlipVBtn_.setVisible(false);
+    libDupeBtn_.setVisible(false);
     libDeleteBtn_.setVisible(false);
+    libDescLabel_.setVisible(false);
+    libPreviewRow_ = -1;
 
     // Effects tab
     effectPanel_.setVisible(false);
@@ -1132,15 +1264,24 @@ void EraeEditor::showTabContent(SidebarTabBar::Tab tab)
             break;
         }
 
-        case SidebarTabBar::Library:
+        case SidebarTabBar::Library: {
             libLabel_.setVisible(true);
             libraryList_.setVisible(true);
             libSaveBtn_.setVisible(true);
             libPlaceBtn_.setVisible(true);
             libFlipHBtn_.setVisible(true);
             libFlipVBtn_.setVisible(true);
+            libDupeBtn_.setVisible(true);
             libDeleteBtn_.setVisible(true);
+            effectPanel_.setVisible(true);
+            // Restore preview if a row is selected
+            int selRow = libraryList_.getSelectedRow();
+            if (selRow >= 0) {
+                libDescLabel_.setVisible(true);
+                libPreviewRow_ = selRow;
+            }
             break;
+        }
 
         case SidebarTabBar::Settings:
             fileLabel_.setVisible(true);
@@ -1165,10 +1306,6 @@ void EraeEditor::showTabContent(SidebarTabBar::Tab tab)
             connectButton_.setVisible(true);
             fingerColorsToggle_.setVisible(true);
             dawFeedbackToggle_.setVisible(true);
-            break;
-
-        case SidebarTabBar::Effects:
-            effectPanel_.setVisible(true);
             break;
 
         default:

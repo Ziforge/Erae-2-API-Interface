@@ -79,6 +79,7 @@ void TouchEffectEngine::handleFinger(const FingerEvent& event, Shape* shape)
         return;
 
     paramsCache_[shape->id] = p;
+    bboxCache_[shape->id] = shape->bbox();
     auto& st = states_[shape->id];
 
     if (event.action == SysEx::ACTION_DOWN) {
@@ -175,10 +176,14 @@ void TouchEffectEngine::handleFinger(const FingerEvent& event, Shape* shape)
         if (p.type == TouchEffectType::Membrane) {
             auto& ms = st.membraneState;
             if (!ms.displacement.valid()) {
-                initGridForShape(ms.displacement);
-                initGridForShape(ms.velocity);
+                auto bb = shape->bbox();
+                initGridForShape(ms.displacement, bb);
+                initGridForShape(ms.velocity, bb);
+                st.gridOriginX = bb.xMin;
+                st.gridOriginY = bb.yMin;
             }
-            int gx = (int)std::round(event.x), gy = (int)std::round(event.y);
+            int gx = (int)std::round(event.x - st.gridOriginX);
+            int gy = (int)std::round(event.y - st.gridOriginY);
             float force = event.z * 5.0f;
             ms.velocity.add(gx, gy, force);
             ms.velocity.add(gx-1, gy, force*0.5f);
@@ -191,12 +196,16 @@ void TouchEffectEngine::handleFinger(const FingerEvent& event, Shape* shape)
         if (p.type == TouchEffectType::Fluid) {
             auto& fs = st.fluidState;
             if (!fs.density.valid()) {
-                initGridForShape(fs.vx); initGridForShape(fs.vy);
-                initGridForShape(fs.density);
-                initGridForShape(fs.vx0); initGridForShape(fs.vy0);
-                initGridForShape(fs.d0);
+                auto bb = shape->bbox();
+                initGridForShape(fs.vx, bb); initGridForShape(fs.vy, bb);
+                initGridForShape(fs.density, bb);
+                initGridForShape(fs.vx0, bb); initGridForShape(fs.vy0, bb);
+                initGridForShape(fs.d0, bb);
+                st.gridOriginX = bb.xMin;
+                st.gridOriginY = bb.yMin;
             }
-            int gx = (int)std::round(event.x), gy = (int)std::round(event.y);
+            int gx = (int)std::round(event.x - st.gridOriginX);
+            int gy = (int)std::round(event.y - st.gridOriginY);
             fs.density.add(gx, gy, 2.0f);
         }
 
@@ -204,10 +213,14 @@ void TouchEffectEngine::handleFinger(const FingerEvent& event, Shape* shape)
         if (p.type == TouchEffectType::SpringLattice) {
             auto& sp = st.springState;
             if (!sp.displacement.valid()) {
-                initGridForShape(sp.displacement);
-                initGridForShape(sp.velocity);
+                auto bb = shape->bbox();
+                initGridForShape(sp.displacement, bb);
+                initGridForShape(sp.velocity, bb);
+                st.gridOriginX = bb.xMin;
+                st.gridOriginY = bb.yMin;
             }
-            int gx = (int)std::round(event.x), gy = (int)std::round(event.y);
+            int gx = (int)std::round(event.x - st.gridOriginX);
+            int gy = (int)std::round(event.y - st.gridOriginY);
             sp.displacement.add(gx, gy, event.z * 3.0f);
         }
 
@@ -245,8 +258,14 @@ void TouchEffectEngine::handleFinger(const FingerEvent& event, Shape* shape)
         // Tombolo: deposit material
         if (p.type == TouchEffectType::Tombolo) {
             auto& ts = st.tomboloState;
-            if (!ts.height.valid()) initGridForShape(ts.height);
-            int gx = (int)std::round(event.x), gy = (int)std::round(event.y);
+            if (!ts.height.valid()) {
+                auto bb = shape->bbox();
+                initGridForShape(ts.height, bb);
+                st.gridOriginX = bb.xMin;
+                st.gridOriginY = bb.yMin;
+            }
+            int gx = (int)std::round(event.x - st.gridOriginX);
+            int gy = (int)std::round(event.y - st.gridOriginY);
             ts.height.add(gx, gy, 4.0f);
         }
 
@@ -305,9 +324,15 @@ void TouchEffectEngine::handleFinger(const FingerEvent& event, Shape* shape)
         // WaveInterference: add source
         if (p.type == TouchEffectType::WaveInterference) {
             auto& ws = st.waveInterfState;
-            if (!ws.field.valid()) initGridForShape(ws.field);
+            if (!ws.field.valid()) {
+                auto bb = shape->bbox();
+                initGridForShape(ws.field, bb);
+                st.gridOriginX = bb.xMin;
+                st.gridOriginY = bb.yMin;
+            }
             WaveSource src;
-            src.x = event.x; src.y = event.y;
+            src.x = event.x - st.gridOriginX;
+            src.y = event.y - st.gridOriginY;
             src.frequency = 1.5f; src.phase = 0.0f;
             src.fingerId = event.fingerId;
             ws.sources.push_back(src);
@@ -375,7 +400,8 @@ void TouchEffectEngine::handleFinger(const FingerEvent& event, Shape* shape)
         if (p.type == TouchEffectType::Fluid) {
             auto& fs = st.fluidState;
             if (fs.density.valid()) {
-                int gx = (int)std::round(event.x), gy = (int)std::round(event.y);
+                int gx = (int)std::round(event.x - st.gridOriginX);
+                int gy = (int)std::round(event.y - st.gridOriginY);
                 float dx = event.x - st.prevX, dy = event.y - st.prevY;
                 fs.vx.add(gx, gy, dx * 5.0f);
                 fs.vy.add(gx, gy, dy * 5.0f);
@@ -395,7 +421,8 @@ void TouchEffectEngine::handleFinger(const FingerEvent& event, Shape* shape)
         if (p.type == TouchEffectType::Tombolo) {
             auto& ts = st.tomboloState;
             if (ts.height.valid()) {
-                int gx = (int)std::round(event.x), gy = (int)std::round(event.y);
+                int gx = (int)std::round(event.x - st.gridOriginX);
+                int gy = (int)std::round(event.y - st.gridOriginY);
                 float h = ts.height.get(gx, gy);
                 if (h > 0.5f) {
                     ts.height.add(gx, gy, -1.0f);
@@ -432,11 +459,13 @@ void TouchEffectEngine::handleFinger(const FingerEvent& event, Shape* shape)
         // WaveInterference: move source (velocity → frequency)
         if (p.type == TouchEffectType::WaveInterference) {
             auto& ws = st.waveInterfState;
+            float localX = event.x - st.gridOriginX;
+            float localY = event.y - st.gridOriginY;
             for (auto& src : ws.sources) {
                 if (src.fingerId == event.fingerId) {
-                    float dx = event.x - src.x, dy = event.y - src.y;
+                    float dx = localX - src.x, dy = localY - src.y;
                     float vel = std::sqrt(dx*dx + dy*dy);
-                    src.x = event.x; src.y = event.y;
+                    src.x = localX; src.y = localY;
                     src.frequency = 0.5f + vel * 0.5f;
                     break;
                 }
@@ -558,6 +587,11 @@ void TouchEffectEngine::advanceFrame(float dt)
         if (pit == paramsCache_.end()) continue;
         auto& p = pit->second;
 
+        // Get shape bbox (fallback to full grid if not cached)
+        BBox bb = {0, 0, 42, 24};
+        auto bit = bboxCache_.find(shapeId);
+        if (bit != bboxCache_.end()) bb = bit->second;
+
         float motionScale = 1.0f;
         if (p.motionReactive)
             motionScale = std::min(1.0f, st.velocity / 10.0f);
@@ -587,7 +621,7 @@ void TouchEffectEngine::advanceFrame(float dt)
                         st.particles.push_back(ps);
                     }
                 }
-                updateParticles(st, p, dt);
+                updateParticles(st, p, bb, dt);
                 break;
             }
             case TouchEffectType::Pulse:
@@ -621,13 +655,13 @@ void TouchEffectEngine::advanceFrame(float dt)
                 updatePendulum(st, p, dt);
                 break;
             case TouchEffectType::Collision:
-                updateCollision(st, p, dt);
+                updateCollision(st, p, bb, dt);
                 break;
             case TouchEffectType::Tombolo:
                 updateTombolo(st, p, dt);
                 break;
             case TouchEffectType::GravityWell:
-                updateGravityWell(st, p, dt);
+                updateGravityWell(st, p, bb, dt);
                 break;
             case TouchEffectType::ElasticBand:
                 updateElasticBand(st, p, dt);
@@ -640,6 +674,34 @@ void TouchEffectEngine::advanceFrame(float dt)
                 break;
             default:
                 break;
+        }
+
+        // Re-normalize modX/modY from absolute grid coords to shape-local [0,1]
+        // (grid-field effects — Membrane, Fluid, SpringLattice, WaveInterference —
+        //  already normalize to their field dims, so skip those)
+        if (p.type != TouchEffectType::Membrane && p.type != TouchEffectType::Fluid &&
+            p.type != TouchEffectType::SpringLattice && p.type != TouchEffectType::WaveInterference &&
+            p.type != TouchEffectType::Tombolo) {
+            float bw = bb.xMax - bb.xMin;
+            float bh = bb.yMax - bb.yMin;
+            // modX/modY were set as absolute_coord / 42 (or similar) — convert to shape-local
+            // We know prevX is absolute grid, so re-derive from prevX/prevY when available
+            if (st.prevX >= 0.0f && bw > 0 && bh > 0) {
+                // For effects that set modX/Y from prevX/prevY or similar absolute coords,
+                // just re-clamp to shape bbox. The individual update functions already set
+                // modX/Y from absolute coords; we override with proper normalization.
+            }
+            // Already fixed in updateParticles, updateGravityWell, updateCollision;
+            // fix remaining by converting from the 0-1 range (normalized to 42/24)
+            // back to absolute, then to shape-local
+            if (p.type != TouchEffectType::Particles &&
+                p.type != TouchEffectType::GravityWell &&
+                p.type != TouchEffectType::Collision) {
+                float absX = st.modX * 42.0f;  // undo old normalization
+                float absY = st.modY * 24.0f;
+                st.modX = bw > 0 ? std::clamp((absX - bb.xMin) / bw, 0.0f, 1.0f) : 0.5f;
+                st.modY = bh > 0 ? std::clamp((absY - bb.yMin) / bh, 0.0f, 1.0f) : 0.5f;
+            }
         }
 
         // Send modulation
@@ -711,13 +773,22 @@ void TouchEffectEngine::updateRipple(ShapeEffectState& st, const EffectParams& p
     }
 }
 
-void TouchEffectEngine::updateParticles(ShapeEffectState& st, const EffectParams& p, float dt)
+void TouchEffectEngine::updateParticles(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt)
 {
+    float bw = bb.xMax - bb.xMin;
+    float bh = bb.yMax - bb.yMin;
+
     for (auto& ps : st.particles) {
         ps.x += ps.vx * dt;
         ps.y += ps.vy * dt;
         ps.vy += 2.0f * dt; // gravity
         ps.age += dt;
+
+        // Bounce off shape boundaries
+        if (ps.x < bb.xMin) { ps.x = bb.xMin; ps.vx = std::abs(ps.vx) * 0.7f; }
+        if (ps.x > bb.xMax) { ps.x = bb.xMax; ps.vx = -std::abs(ps.vx) * 0.7f; }
+        if (ps.y < bb.yMin) { ps.y = bb.yMin; ps.vy = std::abs(ps.vy) * 0.7f; }
+        if (ps.y > bb.yMax) { ps.y = bb.yMax; ps.vy = -std::abs(ps.vy) * 0.7f; }
     }
 
     // Remove dead particles
@@ -728,14 +799,14 @@ void TouchEffectEngine::updateParticles(ShapeEffectState& st, const EffectParams
 
     st.modValue = st.particles.empty() ? 0.0f : (float)st.particles.size() / 30.0f;
 
-    // MPE XYZ: particle centroid → X/Y, count → Z
+    // MPE XYZ: particle centroid → X/Y (normalized to shape bbox), count → Z
     if (!st.particles.empty()) {
         float cx = 0.0f, cy = 0.0f;
         for (auto& ps : st.particles) { cx += ps.x; cy += ps.y; }
         cx /= (float)st.particles.size();
         cy /= (float)st.particles.size();
-        st.modX = std::max(0.0f, std::min(1.0f, cx / 42.0f));
-        st.modY = std::max(0.0f, std::min(1.0f, cy / 24.0f));
+        st.modX = bw > 0 ? std::clamp((cx - bb.xMin) / bw, 0.0f, 1.0f) : 0.5f;
+        st.modY = bh > 0 ? std::clamp((cy - bb.yMin) / bh, 0.0f, 1.0f) : 0.5f;
         st.modZ = st.modValue;
     }
 }
@@ -1032,10 +1103,13 @@ void TouchEffectEngine::sendModulation(const std::string& /*shapeId*/,
 // ============================================================
 // Grid initializer
 // ============================================================
-void TouchEffectEngine::initGridForShape(GridField& gf, int w, int h)
+void TouchEffectEngine::initGridForShape(GridField& gf, const BBox& bb)
 {
-    if (!gf.valid())
+    if (!gf.valid()) {
+        int w = std::max(1, (int)std::ceil(bb.xMax - bb.xMin));
+        int h = std::max(1, (int)std::ceil(bb.yMax - bb.yMin));
         gf.init(w, h, 0.0f);
+    }
 }
 
 // ============================================================
@@ -1112,8 +1186,8 @@ void TouchEffectEngine::updateMembrane(ShapeEffectState& st, const EffectParams&
     }
 
     st.modValue = std::min(1.0f, peakDisp * 0.5f) * p.intensity;
-    st.modX = std::max(0.0f, std::min(1.0f, (float)peakX / 42.0f));
-    st.modY = std::max(0.0f, std::min(1.0f, (float)peakY / 24.0f));
+    st.modX = std::max(0.0f, std::min(1.0f, (float)peakX / (float)w));
+    st.modY = std::max(0.0f, std::min(1.0f, (float)peakY / (float)h));
     st.modZ = st.modValue;
 }
 
@@ -1270,7 +1344,7 @@ void TouchEffectEngine::updatePendulum(ShapeEffectState& st, const EffectParams&
     st.modZ = std::min(1.0f, std::abs(ps.omega1) * 0.2f);
 }
 
-void TouchEffectEngine::updateCollision(ShapeEffectState& st, const EffectParams& p, float dt)
+void TouchEffectEngine::updateCollision(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt)
 {
     auto& cs = st.collisionState;
     cs.recentCollisions = 0;
@@ -1280,11 +1354,11 @@ void TouchEffectEngine::updateCollision(ShapeEffectState& st, const EffectParams
         b.y += b.vy * dt * p.speed;
         b.vy += 2.0f * dt; // gravity
 
-        // Wall bounce
-        if (b.x - b.radius < 0)   { b.x = b.radius; b.vx = std::abs(b.vx); cs.recentCollisions++; }
-        if (b.x + b.radius > 41)  { b.x = 41 - b.radius; b.vx = -std::abs(b.vx); cs.recentCollisions++; }
-        if (b.y - b.radius < 0)   { b.y = b.radius; b.vy = std::abs(b.vy); cs.recentCollisions++; }
-        if (b.y + b.radius > 23)  { b.y = 23 - b.radius; b.vy = -std::abs(b.vy); cs.recentCollisions++; }
+        // Wall bounce — use shape bbox
+        if (b.x - b.radius < bb.xMin) { b.x = bb.xMin + b.radius; b.vx = std::abs(b.vx); cs.recentCollisions++; }
+        if (b.x + b.radius > bb.xMax) { b.x = bb.xMax - b.radius; b.vx = -std::abs(b.vx); cs.recentCollisions++; }
+        if (b.y - b.radius < bb.yMin) { b.y = bb.yMin + b.radius; b.vy = std::abs(b.vy); cs.recentCollisions++; }
+        if (b.y + b.radius > bb.yMax) { b.y = bb.yMax - b.radius; b.vy = -std::abs(b.vy); cs.recentCollisions++; }
 
         b.brightness *= (1.0f - 0.1f * dt);
     }
@@ -1320,13 +1394,15 @@ void TouchEffectEngine::updateCollision(ShapeEffectState& st, const EffectParams
             [](const CollisionBall& b) { return b.brightness < 0.05f; }),
         cs.balls.end());
 
-    // Centroid
+    // Centroid — normalized to shape bbox
     float cx = 0, cy = 0;
+    float bw = bb.xMax - bb.xMin;
+    float bh = bb.yMax - bb.yMin;
     for (auto& b : cs.balls) { cx += b.x; cy += b.y; }
     if (!cs.balls.empty()) { cx /= cs.balls.size(); cy /= cs.balls.size(); }
     st.modValue = cs.balls.empty() ? 0.0f : std::min(1.0f, (float)cs.balls.size() / 15.0f) * p.intensity;
-    st.modX = std::max(0.0f, std::min(1.0f, cx / 42.0f));
-    st.modY = std::max(0.0f, std::min(1.0f, cy / 24.0f));
+    st.modX = bw > 0 ? std::clamp((cx - bb.xMin) / bw, 0.0f, 1.0f) : 0.5f;
+    st.modY = bh > 0 ? std::clamp((cy - bb.yMin) / bh, 0.0f, 1.0f) : 0.5f;
     st.modZ = std::min(1.0f, (float)cs.recentCollisions / 10.0f);
 }
 
@@ -1373,11 +1449,13 @@ void TouchEffectEngine::updateTombolo(ShapeEffectState& st, const EffectParams& 
     st.modZ = st.modValue;
 }
 
-void TouchEffectEngine::updateGravityWell(ShapeEffectState& st, const EffectParams& p, float dt)
+void TouchEffectEngine::updateGravityWell(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt)
 {
     auto& gs = st.gravityState;
     float G = p.speed * 50.0f;
     float softening = 1.0f;
+    float bw = bb.xMax - bb.xMin;
+    float bh = bb.yMax - bb.yMin;
 
     // Fingers act as heavy masses
     for (auto& gp : gs.particles) {
@@ -1395,14 +1473,18 @@ void TouchEffectEngine::updateGravityWell(ShapeEffectState& st, const EffectPara
         gp.x += gp.vx * dt;
         gp.y += gp.vy * dt;
         gp.brightness *= (1.0f - p.decay * 0.05f * dt);
+
+        // Bounce off shape boundaries
+        if (gp.x < bb.xMin) { gp.x = bb.xMin; gp.vx = std::abs(gp.vx) * 0.8f; }
+        if (gp.x > bb.xMax) { gp.x = bb.xMax; gp.vx = -std::abs(gp.vx) * 0.8f; }
+        if (gp.y < bb.yMin) { gp.y = bb.yMin; gp.vy = std::abs(gp.vy) * 0.8f; }
+        if (gp.y > bb.yMax) { gp.y = bb.yMax; gp.vy = -std::abs(gp.vy) * 0.8f; }
     }
 
-    // Remove out-of-bounds or dim particles
+    // Remove dim particles
     gs.particles.erase(
         std::remove_if(gs.particles.begin(), gs.particles.end(),
-            [](const GravityParticle& gp) {
-                return gp.brightness < 0.02f || gp.x < -10 || gp.x > 52 || gp.y < -10 || gp.y > 34;
-            }),
+            [](const GravityParticle& gp) { return gp.brightness < 0.02f; }),
         gs.particles.end());
 
     // Centroid + orbital energy
@@ -1413,8 +1495,8 @@ void TouchEffectEngine::updateGravityWell(ShapeEffectState& st, const EffectPara
     }
     if (!gs.particles.empty()) { cx /= gs.particles.size(); cy /= gs.particles.size(); }
     st.modValue = gs.particles.empty() ? 0.0f : std::min(1.0f, (float)gs.particles.size() / 40.0f) * p.intensity;
-    st.modX = std::max(0.0f, std::min(1.0f, cx / 42.0f));
-    st.modY = std::max(0.0f, std::min(1.0f, cy / 24.0f));
+    st.modX = bw > 0 ? std::clamp((cx - bb.xMin) / bw, 0.0f, 1.0f) : 0.5f;
+    st.modY = bh > 0 ? std::clamp((cy - bb.yMin) / bh, 0.0f, 1.0f) : 0.5f;
     st.modZ = std::min(1.0f, energy * 0.01f / std::max(1.0f, (float)gs.particles.size()));
 }
 
@@ -1457,9 +1539,6 @@ void TouchEffectEngine::updateElasticBand(ShapeEffectState& st, const EffectPara
         es.points[i].vy *= (1.0f - damping * dt);
         es.points[i].x += es.points[i].vx * dt;
         es.points[i].y += es.points[i].vy * dt;
-        // Clamp to grid
-        es.points[i].x = std::max(0.0f, std::min(41.0f, es.points[i].x));
-        es.points[i].y = std::max(0.0f, std::min(23.0f, es.points[i].y));
     }
 
     // Midpoint + tension
@@ -1565,6 +1644,7 @@ void TouchEffectEngine::clear()
     states_.clear();
     activeFingers_.clear();
     paramsCache_.clear();
+    bboxCache_.clear();
 }
 
 } // namespace erae

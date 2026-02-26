@@ -303,6 +303,10 @@ struct ShapeEffectState {
     std::vector<BoundaryFinger> boundaryFingers;
     std::vector<std::pair<float,float>> convexHull; // computed hull vertices
 
+    // Grid-field origin (shape bbox min corner, for shape-relative grids)
+    float gridOriginX = 0.0f;
+    float gridOriginY = 0.0f;
+
     // Physical model states (11 new types)
     StringState stringState;
     MembraneState membraneState;
