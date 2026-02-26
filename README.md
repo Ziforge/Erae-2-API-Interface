@@ -55,6 +55,52 @@ Each shape can have an independent visual style that animates on the hardware su
 - **Position Dot** - Bright dot tracks finger position within shape
 - **Radial Arc** - Arc sweeps based on finger angle from center
 
+## Touch Effects
+
+Each shape can run a real-time touch effect that drives animated visuals on both the 42x24 LED grid and the screen canvas, with optional MPE XYZ modulation output. Effects are configured per-shape with Speed, Intensity, Decay, and Motion Reactive parameters.
+
+### Visual Effects (8 types)
+
+| Effect | Description |
+|--------|-------------|
+| **Trail** | Fading trail follows finger motion |
+| **Ripple** | Expanding rings from touch points |
+| **Particles** | Fountain of particles from finger position |
+| **Pulse** | Shape brightness oscillates while touched |
+| **Breathe** | Slow sinusoidal brightness modulation |
+| **Spin** | Dots orbit around the finger position |
+| **Orbit** | Multi-finger: pivot + control radius/speed of orbiting elements |
+| **Boundary** | Multi-finger: convex hull with filled interior |
+
+### Physical Model Effects (11 types)
+
+Physics simulations driven by multi-touch input. Each model's state variables map to MPE X/Y/Z for expressive MIDI control.
+
+| Effect | Physics | Finger Interaction | MPE X/Y/Z |
+|--------|---------|-------------------|------------|
+| **String** | 1D wave equation (N=32) | 2 fingers = endpoints, 3rd = pluck | Pluck pos / midpoint displacement / energy |
+| **Membrane** | 2D wave equation on grid | Strike at touch position, pressure = force | Peak displacement position / amplitude |
+| **Fluid** | Navier-Stokes (Stam stable fluids) | Drag stirs velocity field, deposits dye | Density centroid / vorticity |
+| **Spring Lattice** | Mass-spring grid network | Touch displaces nodes, propagates | Displacement centroid / energy |
+| **Pendulum** | Single/double pendulum ODE | 1st finger = pivot, 2nd enables double | Bob position / angular velocity |
+| **Collision** | Elastic balls with gravity | Touch spawns balls, wall/ball-ball bounce | Ball centroid / collision rate |
+| **Tombolo** | Sandpile erosion/deposit automaton | Press deposits material, drag erodes | Mass centroid / total height |
+| **Gravity Well** | N-body (fingers as masses) | Fingers attract orbiting particles | Particle centroid / orbital energy |
+| **Elastic Band** | 20-point spring chain | Grab points, stretch, release snaps back | Band midpoint / tension |
+| **Bow** | Stick-slip friction model | Drag = bow velocity, pressure = force | Bow position / friction force |
+| **Wave Interference** | Superposition of circular waves | Each finger = wave source, velocity = frequency | Interference peak / amplitude |
+
+### Modulation Targets
+
+Effect state can be routed to any modulation target:
+
+- **MIDI CC** - Effect value (0-1) mapped to a CC number
+- **Pitch Bend** - Effect value mapped to 14-bit pitch bend
+- **Channel Pressure** - Effect value as aftertouch
+- **CV** - Effect value on an audio output channel
+- **OSC** - Effect value mirrored over UDP
+- **MPE XYZ** - Full 3-axis output: X = pitch bend, Y = CC74 slide, Z = pressure (3 CV channels for X/Y/Z)
+
 ## MIDI Behaviors
 
 - **Trigger** - Note on/off on touch down/up. Supports fixed or pressure-mapped velocity, configurable velocity curve, and latch mode (toggle on/off per press)

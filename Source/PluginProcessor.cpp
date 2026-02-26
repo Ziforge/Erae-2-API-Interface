@@ -13,6 +13,9 @@ EraeProcessor::EraeProcessor()
     renderer_.setProcessor(this);
     behaviorEngine_.setOscOutput(&oscOutput_);
     behaviorEngine_.setCVOutput(&cvOutput_);
+    effectEngine_.setMidiOut(&midiOut_);
+    effectEngine_.setOscOutput(&oscOutput_);
+    effectEngine_.setCVOutput(&cvOutput_);
 
     // Load default drum pads layout
     multiLayout_.currentPage().setShapes(Preset::drumPads());
@@ -153,9 +156,19 @@ void EraeProcessor::fingerEvent(const FingerEvent& event)
     // Dispatch to behavior engine for MIDI generation
     behaviorEngine_.handle(flipped, shape);
 
+    // Dispatch to effect engine for visual effects + modulation
+    effectEngine_.handleFinger(flipped, shape);
+
     // Kick renderer for widget animation while fingers are active
     if (shape && visualStyleFromString(shape->visualStyle) != VisualStyle::Static)
         renderer_.requestFullRedraw();
+
+    // Kick renderer for active effects too
+    if (shape) {
+        auto ep = TouchEffectEngine::parseParams(*shape);
+        if (ep.type != TouchEffectType::None)
+            renderer_.requestFullRedraw();
+    }
 }
 
 void EraeProcessor::connectionChanged(bool connected)

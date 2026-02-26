@@ -7,6 +7,8 @@
 #include "../Core/SelectionManager.h"
 #include "../Rendering/WidgetRenderer.h"
 #include "../Rendering/FingerPalette.h"
+#include "../Effects/TouchEffect.h"
+#include "../Effects/EffectRenderer.h"
 #include "Theme.h"
 #include <set>
 #include <map>
@@ -91,6 +93,10 @@ public:
     void setHighlightedShapes(const std::set<std::string>& ids);
     void setPerFingerColors(bool enabled) { perFingerColors_ = enabled; }
 
+    // Effect overlay — call from editor timer
+    void setEffectStates(const std::map<std::string, ShapeEffectState>& states,
+                         const std::map<std::string, EffectParams>& params);
+
     // Poly/pixel creation (public for toolbar Done button)
     void finishPolygonCreation();
     void cancelPolygonCreation();
@@ -133,6 +139,7 @@ private:
     void drawEditModeOverlay(juce::Graphics& g);
     void drawDesignModeOverlay(juce::Graphics& g);
     void drawFingerOverlay(juce::Graphics& g);
+    void drawEffectOverlay(juce::Graphics& g);
     void drawCoordinateReadout(juce::Graphics& g);
 
     juce::Rectangle<float> gridCellToScreen(float gx, float gy, float gw = 1.0f, float gh = 1.0f) const;
@@ -239,6 +246,10 @@ private:
     // DAW feedback highlights
     std::set<std::string> highlightedShapes_;
     bool perFingerColors_ = true;
+
+    // Effect overlay state
+    std::map<std::string, ShapeEffectState> effectStates_;
+    std::map<std::string, EffectParams> effectParams_;
 
     // Design-shape mode state
     bool designMode_ = false;

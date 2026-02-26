@@ -4,7 +4,7 @@ namespace erae {
 
 SidebarTabBar::SidebarTabBar()
 {
-    const char* names[] = {"Shape", "MIDI", "Output", "Library"};
+    const char* names[] = {"Shape", "Library", "Settings", "Effects"};
     for (int i = 0; i < NumTabs; ++i) {
         buttons_[i].setButtonText(names[i]);
         buttons_[i].onClick = [this, i] {

@@ -1,6 +1,8 @@
 #include "EraeRenderer.h"
 #include "../PluginProcessor.h"
 #include "../Rendering/FingerPalette.h"
+#include "../Effects/EffectRenderer.h"
+#include "../Effects/TouchEffectEngine.h"
 #include <cstring>
 #include <algorithm>
 
@@ -45,8 +47,11 @@ void EraeRenderer::timerCallback()
         widgetStates = processor_->getShapeWidgetStates();
 
     bool widgetsChanged = widgetStates != lastWidgetStates_;
+    bool hasActiveEffects = false;
+    if (processor_ && !processor_->getEffectEngine().getEffectStates().empty())
+        hasActiveEffects = true;
 
-    if (dirty_ || widgetsChanged) {
+    if (dirty_ || widgetsChanged || hasActiveEffects) {
         // Build a 42×24 framebuffer, composite all shapes, send as one image
         static constexpr int W = 42, H = 24;
         uint8_t fb[H][W][3];  // [y][x][rgb] — 7-bit values
@@ -99,6 +104,33 @@ void EraeRenderer::timerCallback()
                             fb[py][px][1] = (uint8_t)std::min(127, (int)fb[py][px][1] + 30);
                             fb[py][px][2] = (uint8_t)std::min(127, (int)fb[py][px][2] + 5);
                         }
+                    }
+                }
+            }
+        }
+
+        // Effect engine: advance + overlay effect pixels
+        if (processor_) {
+            processor_->getEffectEngine().advanceFrame(0.05f);
+            auto& effectStates = processor_->getEffectEngine().getEffectStates();
+            if (!effectStates.empty()) {
+                hasActiveEffects = true;
+                // Build params + shapes maps for renderer
+                std::map<std::string, EffectParams> effectParams;
+                std::map<std::string, const Shape*> effectShapes;
+                for (auto& [sid, _] : effectStates) {
+                    auto* s = layout_.getShape(sid);
+                    if (s) {
+                        effectParams[sid] = TouchEffectEngine::parseParams(*s);
+                        effectShapes[sid] = s;
+                    }
+                }
+                auto effectPixels = EffectRenderer::renderEffects(effectStates, effectParams, effectShapes);
+                for (auto& ep : effectPixels) {
+                    if (ep.x >= 0 && ep.x < W && ep.y >= 0 && ep.y < H) {
+                        fb[ep.y][ep.x][0] = (uint8_t)std::min(127, (int)fb[ep.y][ep.x][0] + (int)(ep.color.r * ep.alpha));
+                        fb[ep.y][ep.x][1] = (uint8_t)std::min(127, (int)fb[ep.y][ep.x][1] + (int)(ep.color.g * ep.alpha));
+                        fb[ep.y][ep.x][2] = (uint8_t)std::min(127, (int)fb[ep.y][ep.x][2] + (int)(ep.color.b * ep.alpha));
                     }
                 }
             }
@@ -176,10 +208,8 @@ void EraeRenderer::timerCallback()
         dirty_ = false;
     }
 
-    // Keep timer running while connected — the timer callback is cheap
-    // when nothing changes (just a map comparison), and we need it
-    // running to detect new finger touches on visual widgets.
-    if (!connection_.isConnected())
+    // Keep timer running while connected or while effects are active
+    if (!connection_.isConnected() && !hasActiveEffects)
         stopTimer();
 }
 

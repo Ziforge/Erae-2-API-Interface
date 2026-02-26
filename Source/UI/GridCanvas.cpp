@@ -930,6 +930,7 @@ void GridCanvas::paint(juce::Graphics& g)
         drawShapes(g);
         drawHoverHighlight(g);
         drawFingerOverlay(g);
+        drawEffectOverlay(g);
         drawSelection(g);
         drawCreationPreview(g);
         drawPolygonCreationPreview(g);
@@ -2479,6 +2480,32 @@ void GridCanvas::setHighlightedShapes(const std::set<std::string>& ids)
         highlightedShapes_ = ids;
         repaint();
     }
+}
+
+void GridCanvas::setEffectStates(const std::map<std::string, ShapeEffectState>& states,
+                                  const std::map<std::string, EffectParams>& params)
+{
+    effectStates_ = states;
+    effectParams_ = params;
+    if (!states.empty())
+        repaint();
+}
+
+void GridCanvas::drawEffectOverlay(juce::Graphics& g)
+{
+    if (effectStates_.empty()) return;
+
+    // Build shapes map from layout
+    std::map<std::string, const Shape*> shapeMap;
+    for (auto& [sid, _] : effectStates_) {
+        auto* s = layout_->getShape(sid);
+        if (s) shapeMap[sid] = s;
+    }
+
+    float cellPx = Theme::CellSize * zoom_;
+    auto g2s = [this](juce::Point<float> grid) { return gridToScreen(grid); };
+
+    EffectRenderer::drawEffects(g, effectStates_, effectParams_, shapeMap, g2s, cellPx);
 }
 
 void GridCanvas::drawFingerOverlay(juce::Graphics& g)

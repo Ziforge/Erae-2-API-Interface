@@ -9,7 +9,7 @@
 #include "UI/EraeLookAndFeel.h"
 #include "UI/SidebarTabBar.h"
 #include "UI/MidiPanel.h"
-#include "UI/OutputPanel.h"
+#include "UI/EffectPanel.h"
 #include "UI/Theme.h"
 #include "Core/ShapeLibrary.h"
 #include "Core/ShapeMorph.h"
@@ -20,7 +20,7 @@ namespace erae {
 class EraeEditor : public juce::AudioProcessorEditor,
                    public ColorPicker7Bit::Listener,
                    public MidiPanel::Listener,
-                   public OutputPanel::Listener,
+                   public EffectPanel::Listener,
                    public SidebarTabBar::Listener,
                    public GridCanvas::Listener,
                    public SelectionManager::Listener,
@@ -40,9 +40,8 @@ public:
     void midiLearnRequested(const std::string& shapeId) override;
     void midiLearnCancelled() override;
 
-    // OutputPanel::Listener
-    void cvParamsChanged(const std::string& shapeId) override;
-    void oscSettingsChanged(bool enabled, const std::string& host, int port) override;
+    // EffectPanel::Listener
+    void effectChanged(const std::string& shapeId) override;
 
     // SidebarTabBar::Listener
     void tabChanged(SidebarTabBar::Tab newTab) override;
@@ -83,33 +82,43 @@ private:
     juce::ToggleButton designSymHToggle_ {"Sym H"};
     juce::ToggleButton designSymVToggle_ {"Sym V"};
 
-    // Toolbar — actions
-    juce::ComboBox presetSelector_;
+    // Toolbar — canvas actions
     juce::ComboBox brushSizeSelector_;
     juce::TextButton undoButton_    {"Undo"};
     juce::TextButton redoButton_    {"Redo"};
-    juce::TextButton clearButton_   {"Clear"};
-    juce::TextButton zoomFitButton_ {"Fit"};
     juce::TextButton deleteButton_  {"Del"};
     juce::TextButton dupeButton_    {"Dupe"};
+    juce::TextButton zoomFitButton_ {"Fit"};
+
+    // Settings tab — file section
+    juce::ComboBox presetSelector_;
     juce::TextButton newButton_     {"New"};
     juce::TextButton saveButton_    {"Save"};
     juce::TextButton loadButton_    {"Load"};
+    juce::Label fileLabel_          {"", "FILE"};
 
-    // Toolbar — Page navigation
+    // Settings tab — pages section
     juce::TextButton pagePrevButton_ {"<"};
     juce::Label pageLabel_           {"", "Page 1/1"};
     juce::TextButton pageNextButton_ {">"};
     juce::TextButton pageAddButton_  {"+"};
     juce::TextButton pageDelButton_  {"-"};
     juce::TextButton pageDupButton_  {"Dup"};
+    juce::Label pagesLabel_          {"", "PAGES"};
 
-    // Toolbar — Erae connection
+    // Settings tab — OSC output section (global)
+    juce::Label oscLabel_          {"", "OSC OUTPUT"};
+    juce::ToggleButton oscToggle_  {"Enable"};
+    juce::Label oscHostLabel_      {"", "Host"};
+    juce::TextEditor oscHostEditor_;
+    juce::Label oscPortLabel_      {"", "Port"};
+    juce::Slider oscPortSlider_;
+
+    // Settings tab — hardware section
     juce::TextButton connectButton_ {"Connect"};
-
-    // Toolbar — Phase 5 toggles
     juce::ToggleButton fingerColorsToggle_ {"Colors"};
     juce::ToggleButton dawFeedbackToggle_  {"DAW FB"};
+    juce::Label hardwareLabel_             {"", "HARDWARE"};
 
     // Clipboard
     Clipboard clipboard_;
@@ -149,11 +158,22 @@ private:
     juce::Slider morphSlider_;
     std::string morphIdA_, morphIdB_;
 
-    // Sidebar — MIDI tab
+    // Sidebar — Shape tab: scrollable viewport
+    juce::Viewport shapeViewport_;
+    juce::Component shapeContent_;
+
+    // Sidebar — Shape tab: MIDI (embedded, not its own tab)
     MidiPanel midiPanel_;
 
-    // Sidebar — Output tab
-    OutputPanel outputPanel_;
+    // Sidebar — Effects tab
+    EffectPanel effectPanel_;
+
+    // Sidebar — Shape tab: CV output (per-shape, moved from OutputPanel)
+    juce::Label cvLabel_        {"", "CV OUTPUT"};
+    juce::Label cvEnableLabel_  {"", "CV Enabled"};
+    juce::ToggleButton cvEnableToggle_;
+    juce::Label cvChannelLabel_ {"", "CV Channel"};
+    juce::Slider cvChannelSlider_;
 
     // Sidebar — Library tab
     ShapeLibrary library_;
@@ -205,7 +225,13 @@ private:
     void showTabContent(SidebarTabBar::Tab tab);
     void updateVisualControls();
     void showDesignToolbar(bool show);
+    void loadCVFromShape(Shape* shape);
+    void clearCV();
+    void writeCVToShape();
+    void layoutShapeTabContent(int contentWidth);
     int designShapeCounter_ = 0;
+    Shape* cvCurrentShape_ = nullptr;
+    bool cvLoading_ = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EraeEditor)
 };

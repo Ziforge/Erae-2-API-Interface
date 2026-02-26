@@ -64,6 +64,19 @@ public:
         sendOsc("/erae/pitchbend", channel, value);
     }
 
+    void effectMPE(int channel, float x, float y, float z)
+    {
+        if (!enabled_) return;
+        std::vector<uint8_t> buf;
+        writeString(buf, "/erae/effect/mpe");
+        writeString(buf, ",ifff");
+        writeInt32(buf, channel);
+        writeFloat32(buf, x);
+        writeFloat32(buf, y);
+        writeFloat32(buf, z);
+        send(buf);
+    }
+
     void fingerUpdate(int fingerId, float x, float y, float z, const std::string& shapeId)
     {
         if (!enabled_) return;

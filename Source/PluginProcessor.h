@@ -12,6 +12,7 @@
 #include "MIDI/OscOutput.h"
 #include "MIDI/DawFeedback.h"
 #include "MIDI/CVOutput.h"
+#include "Effects/TouchEffectEngine.h"
 #include "Rendering/WidgetRenderer.h"
 #include <map>
 
@@ -54,6 +55,7 @@ public:
     OscOutput& getOscOutput() { return oscOutput_; }
     DawFeedback& getDawFeedback() { return dawFeedback_; }
     CVOutput& getCVOutput() { return cvOutput_; }
+    TouchEffectEngine& getEffectEngine() { return effectEngine_; }
 
     bool getPerFingerColors() const { return perFingerColors_; }
     void setPerFingerColors(bool en) { perFingerColors_ = en; }
@@ -91,6 +93,7 @@ private:
     OscOutput oscOutput_;
     DawFeedback dawFeedback_;
     CVOutput cvOutput_;
+    TouchEffectEngine effectEngine_;
     EraeRenderer renderer_;
 
     bool perFingerColors_ = false;

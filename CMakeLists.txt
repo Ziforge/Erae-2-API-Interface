@@ -69,8 +69,6 @@ target_sources(EraeShapeEditor
         Source/UI/SidebarTabBar.cpp
         Source/UI/MidiPanel.h
         Source/UI/MidiPanel.cpp
-        Source/UI/OutputPanel.h
-        Source/UI/OutputPanel.cpp
         # Erae hardware
         Source/Erae/EraeSysEx.h
         Source/Erae/FingerStream.h
@@ -92,6 +90,14 @@ target_sources(EraeShapeEditor
         Source/MIDI/CVOutput.h
         # Rendering (Phase 5)
         Source/Rendering/FingerPalette.h
+        # Effects (touch visual effects + modulation)
+        Source/Effects/TouchEffect.h
+        Source/Effects/TouchEffectEngine.h
+        Source/Effects/TouchEffectEngine.cpp
+        Source/Effects/EffectRenderer.h
+        Source/Effects/EffectRenderer.cpp
+        Source/UI/EffectPanel.h
+        Source/UI/EffectPanel.cpp
 )
 
 target_compile_definitions(EraeShapeEditor

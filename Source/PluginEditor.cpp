@@ -100,7 +100,225 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     };
     addAndMakeVisible(brushSizeSelector_);
 
-    // --- Toolbar: presets ---
+    // --- Toolbar: undo/redo ---
+    undoButton_.onClick = [this] { processor_.getUndoManager().undo(); };
+    redoButton_.onClick = [this] { processor_.getUndoManager().redo(); };
+    undoButton_.setTooltip("Undo (Ctrl+Z)");
+    redoButton_.setTooltip("Redo (Ctrl+Shift+Z)");
+    addAndMakeVisible(undoButton_);
+    addAndMakeVisible(redoButton_);
+
+    // --- Toolbar: delete/dupe/fit ---
+    deleteButton_.onClick = [this] { canvas_.deleteSelected(); };
+    dupeButton_.onClick   = [this] { canvas_.duplicateSelected(); };
+    zoomFitButton_.onClick = [this] { canvas_.zoomToFit(); };
+
+    deleteButton_.setTooltip("Delete selected (Del)");
+    dupeButton_.setTooltip("Duplicate selected (Ctrl+D)");
+    zoomFitButton_.setTooltip("Zoom to fit");
+
+    addAndMakeVisible(deleteButton_);
+    addAndMakeVisible(dupeButton_);
+    addAndMakeVisible(zoomFitButton_);
+
+    // --- Canvas ---
+    canvas_.addListener(this);
+    addAndMakeVisible(canvas_);
+
+    // --- Sidebar: Tab bar ---
+    tabBar_.addListener(this);
+    addAndMakeVisible(tabBar_);
+
+    // --- Sidebar: Shape tab — color picker ---
+    colorLabel_.setText("COLOR", juce::dontSendNotification);
+    colorLabel_.setFont(juce::Font(Theme::FontSection, juce::Font::bold));
+    colorLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
+    colorPicker_.addListener(this);
+    colorPicker_.setColor(Color7{0, 80, 127});
+
+    // --- Sidebar: Shape tab — visual style controls ---
+    visualLabel_.setFont(juce::Font(Theme::FontSection, juce::Font::bold));
+    visualLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
+
+    visualBox_.addItem("Static",        1);
+    visualBox_.addItem("Fill Bar",      2);
+    visualBox_.addItem("Position Dot",  3);
+    visualBox_.addItem("Radial Arc",    4);
+    visualBox_.addItem("Pressure Glow", 5);
+    visualBox_.onChange = [this] {
+        auto singleId = selectionManager_.getSingleSelectedId();
+        if (singleId.empty()) return;
+        auto* s = processor_.getLayout().getShape(singleId);
+        if (!s) return;
+        int id = visualBox_.getSelectedId();
+        VisualStyle vstyle;
+        switch (id) {
+            case 1: vstyle = VisualStyle::Static; break;
+            case 2: vstyle = VisualStyle::FillBar; break;
+            case 3: vstyle = VisualStyle::PositionDot; break;
+            case 4: vstyle = VisualStyle::RadialArc; break;
+            case 5: vstyle = VisualStyle::PressureGlow; break;
+            default: return;
+        }
+        s->visualStyle = visualStyleToString(vstyle);
+        updateVisualControls();
+        auto* vobj = new juce::DynamicObject();
+        if (vstyle == VisualStyle::FillBar)
+            vobj->setProperty("fill_horizontal", fillHorizToggle_.getToggleState());
+        s->visualParams = juce::var(vobj);
+        processor_.getLayout().setBehavior(singleId, s->behavior, s->behaviorParams);
+    };
+
+    fillHorizLabel_.setFont(juce::Font(Theme::FontBase));
+    fillHorizLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
+
+    fillHorizToggle_.onClick = [this] {
+        auto singleId = selectionManager_.getSingleSelectedId();
+        if (singleId.empty()) return;
+        auto* s = processor_.getLayout().getShape(singleId);
+        if (!s) return;
+        auto* vobj = new juce::DynamicObject();
+        vobj->setProperty("fill_horizontal", fillHorizToggle_.getToggleState());
+        s->visualParams = juce::var(vobj);
+        processor_.getLayout().setBehavior(singleId, s->behavior, s->behaviorParams);
+    };
+
+    // --- Sidebar: Shape tab — alignment buttons ---
+    alignLabel_.setFont(juce::Font(Theme::FontSection, juce::Font::bold));
+    alignLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
+
+    auto setupAlignBtn = [this](juce::TextButton& btn, const juce::String& tip) {
+        btn.setTooltip(tip);
+    };
+    setupAlignBtn(alignLeftBtn_, "Align Left");
+    setupAlignBtn(alignRightBtn_, "Align Right");
+    setupAlignBtn(alignTopBtn_, "Align Top");
+    setupAlignBtn(alignBottomBtn_, "Align Bottom");
+    setupAlignBtn(alignCHBtn_, "Align Center H");
+    setupAlignBtn(alignCVBtn_, "Align Center V");
+    setupAlignBtn(distHBtn_, "Distribute H");
+    setupAlignBtn(distVBtn_, "Distribute V");
+
+    alignLeftBtn_.onClick   = [this] { performAlignment(AlignmentTools::alignLeft, "Align Left"); };
+    alignRightBtn_.onClick  = [this] { performAlignment(AlignmentTools::alignRight, "Align Right"); };
+    alignTopBtn_.onClick    = [this] { performAlignment(AlignmentTools::alignTop, "Align Top"); };
+    alignBottomBtn_.onClick = [this] { performAlignment(AlignmentTools::alignBottom, "Align Bottom"); };
+    alignCHBtn_.onClick     = [this] { performAlignment(AlignmentTools::alignCenterH, "Align Center H"); };
+    alignCVBtn_.onClick     = [this] { performAlignment(AlignmentTools::alignCenterV, "Align Center V"); };
+    distHBtn_.onClick       = [this] { performAlignment(AlignmentTools::distributeH, "Distribute H"); };
+    distVBtn_.onClick       = [this] { performAlignment(AlignmentTools::distributeV, "Distribute V"); };
+
+    showAlignmentButtons(false);
+
+    // --- Sidebar: Shape tab — morph controls ---
+    morphLabel_.setFont(juce::Font(Theme::FontSection, juce::Font::bold));
+    morphLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
+
+    morphSlider_.setRange(0.0, 1.0, 0.01);
+    morphSlider_.setValue(0.5, juce::dontSendNotification);
+    morphSlider_.setSliderStyle(juce::Slider::LinearBar);
+    morphSlider_.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 40, 20);
+    morphSlider_.setColour(juce::Slider::trackColourId, Theme::Colors::Accent);
+    morphSlider_.setColour(juce::Slider::textBoxTextColourId, Theme::Colors::Text);
+
+    morphButton_.setTooltip("Create a morphed shape between two selected shapes");
+    morphButton_.onClick = [this] {
+        auto& ids = selectionManager_.getSelectedIds();
+        if (ids.size() != 2) return;
+        auto it = ids.begin();
+        auto* shapeA = processor_.getLayout().getShape(*it++);
+        auto* shapeB = processor_.getLayout().getShape(*it);
+        if (!shapeA || !shapeB) return;
+
+        float t = (float)morphSlider_.getValue();
+        auto newId = "morph_" + std::to_string(++shapeCounterRef_);
+        auto morphed = ShapeMorph::morph(*shapeA, *shapeB, t, newId);
+        if (morphed) {
+            morphed->behavior = shapeA->behavior;
+            morphed->behaviorParams = shapeA->behaviorParams;
+            morphed->visualStyle = shapeA->visualStyle;
+            morphed->visualParams = shapeA->visualParams;
+            processor_.getUndoManager().perform(
+                std::make_unique<AddShapeAction>(processor_.getLayout(), std::move(morphed)));
+            selectionManager_.select(newId);
+        }
+    };
+
+    morphLabel_.setVisible(false);
+    morphSlider_.setVisible(false);
+    morphButton_.setVisible(false);
+
+    // --- Sidebar: Shape tab — MIDI panel (embedded in viewport) ---
+    midiPanel_.addListener(this);
+
+    // --- Sidebar: Effects tab — EffectPanel ---
+    effectPanel_.addListener(this);
+    addAndMakeVisible(effectPanel_);
+    effectPanel_.setVisible(false);
+
+    // --- Sidebar: Shape tab — CV controls (per-shape) ---
+    cvLabel_.setFont(juce::Font(Theme::FontSection, juce::Font::bold));
+    cvLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
+    cvEnableLabel_.setFont(juce::Font(Theme::FontBase));
+    cvEnableLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
+    cvEnableToggle_.onClick = [this] {
+        if (cvLoading_ || !cvCurrentShape_) return;
+        writeCVToShape();
+        auto* s = cvCurrentShape_;
+        processor_.getLayout().setBehavior(s->id, s->behavior, s->behaviorParams);
+        // Re-layout to show/hide channel slider
+        resized();
+    };
+    cvChannelLabel_.setFont(juce::Font(Theme::FontBase));
+    cvChannelLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
+    cvChannelSlider_.setRange(0, 31, 1.0);
+    cvChannelSlider_.setValue(0, juce::dontSendNotification);
+    cvChannelSlider_.setSliderStyle(juce::Slider::LinearBar);
+    cvChannelSlider_.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 40, 20);
+    cvChannelSlider_.setColour(juce::Slider::trackColourId, Theme::Colors::Accent);
+    cvChannelSlider_.setColour(juce::Slider::textBoxTextColourId, Theme::Colors::Text);
+    cvChannelSlider_.onValueChange = [this] {
+        if (cvLoading_ || !cvCurrentShape_) return;
+        writeCVToShape();
+        auto* s = cvCurrentShape_;
+        processor_.getLayout().setBehavior(s->id, s->behavior, s->behaviorParams);
+    };
+
+    // Add shape tab components to shapeContent_ (child of viewport)
+    shapeContent_.addAndMakeVisible(colorLabel_);
+    shapeContent_.addAndMakeVisible(colorPicker_);
+    shapeContent_.addAndMakeVisible(visualLabel_);
+    shapeContent_.addAndMakeVisible(visualBox_);
+    shapeContent_.addAndMakeVisible(fillHorizLabel_);
+    shapeContent_.addAndMakeVisible(fillHorizToggle_);
+    shapeContent_.addAndMakeVisible(midiPanel_);
+    shapeContent_.addAndMakeVisible(cvLabel_);
+    shapeContent_.addAndMakeVisible(cvEnableLabel_);
+    shapeContent_.addAndMakeVisible(cvEnableToggle_);
+    shapeContent_.addAndMakeVisible(cvChannelLabel_);
+    shapeContent_.addAndMakeVisible(cvChannelSlider_);
+    shapeContent_.addAndMakeVisible(alignLabel_);
+    shapeContent_.addAndMakeVisible(alignLeftBtn_);
+    shapeContent_.addAndMakeVisible(alignRightBtn_);
+    shapeContent_.addAndMakeVisible(alignTopBtn_);
+    shapeContent_.addAndMakeVisible(alignBottomBtn_);
+    shapeContent_.addAndMakeVisible(alignCHBtn_);
+    shapeContent_.addAndMakeVisible(alignCVBtn_);
+    shapeContent_.addAndMakeVisible(distHBtn_);
+    shapeContent_.addAndMakeVisible(distVBtn_);
+    shapeContent_.addAndMakeVisible(morphLabel_);
+    shapeContent_.addAndMakeVisible(morphSlider_);
+    shapeContent_.addAndMakeVisible(morphButton_);
+
+    shapeViewport_.setViewedComponent(&shapeContent_, false);
+    shapeViewport_.setScrollBarsShown(true, false);
+    addAndMakeVisible(shapeViewport_);
+
+    // --- Settings tab: file section ---
+    fileLabel_.setFont(juce::Font(Theme::FontSection, juce::Font::bold));
+    fileLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
+    addAndMakeVisible(fileLabel_);
+
     presetSelector_.setTextWhenNothingSelected("Presets...");
     auto& gens = Preset::getGenerators();
     for (int i = 0; i < (int)gens.size(); ++i)
@@ -110,26 +328,6 @@ EraeEditor::EraeEditor(EraeProcessor& p)
         if (idx >= 0) loadPreset(idx);
     };
     addAndMakeVisible(presetSelector_);
-
-    // --- Toolbar: undo/redo ---
-    undoButton_.onClick = [this] { processor_.getUndoManager().undo(); };
-    redoButton_.onClick = [this] { processor_.getUndoManager().redo(); };
-    undoButton_.setTooltip("Undo (Ctrl+Z)");
-    redoButton_.setTooltip("Redo (Ctrl+Shift+Z)");
-    addAndMakeVisible(undoButton_);
-    addAndMakeVisible(redoButton_);
-
-    // --- Toolbar: actions ---
-    deleteButton_.onClick = [this] { canvas_.deleteSelected(); };
-    dupeButton_.onClick   = [this] { canvas_.duplicateSelected(); };
-    clearButton_.onClick  = [this] {
-        auto& um = processor_.getUndoManager();
-        std::vector<std::unique_ptr<Shape>> empty;
-        um.perform(std::make_unique<SetShapesAction>(processor_.getLayout(), std::move(empty)));
-        selectionManager_.clear();
-        updateStatus();
-    };
-    zoomFitButton_.onClick = [this] { canvas_.zoomToFit(); };
 
     newButton_.onClick = [this] {
         auto& ml = processor_.getMultiLayout();
@@ -143,23 +341,19 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     saveButton_.onClick = [this] { savePresetToFile(); };
     loadButton_.onClick = [this] { loadPresetFromFile(); };
 
-    deleteButton_.setTooltip("Delete selected (Del)");
-    dupeButton_.setTooltip("Duplicate selected (Ctrl+D)");
-    clearButton_.setTooltip("Clear all shapes");
-    zoomFitButton_.setTooltip("Zoom to fit");
     newButton_.setTooltip("New blank layout");
     saveButton_.setTooltip("Save preset to file");
     loadButton_.setTooltip("Load preset from file");
 
-    addAndMakeVisible(deleteButton_);
-    addAndMakeVisible(dupeButton_);
-    addAndMakeVisible(clearButton_);
-    addAndMakeVisible(zoomFitButton_);
     addAndMakeVisible(newButton_);
     addAndMakeVisible(saveButton_);
     addAndMakeVisible(loadButton_);
 
-    // --- Toolbar: Page navigation ---
+    // --- Settings tab: pages section ---
+    pagesLabel_.setFont(juce::Font(Theme::FontSection, juce::Font::bold));
+    pagesLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
+    addAndMakeVisible(pagesLabel_);
+
     pagePrevButton_.onClick = [this] {
         auto& ml = processor_.getMultiLayout();
         if (ml.currentPageIndex() > 0) {
@@ -220,7 +414,62 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     addAndMakeVisible(pageDelButton_);
     addAndMakeVisible(pageDupButton_);
 
-    // --- Toolbar: Erae connection ---
+    // --- Settings tab: OSC output section ---
+    oscLabel_.setFont(juce::Font(Theme::FontSection, juce::Font::bold));
+    oscLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
+    addAndMakeVisible(oscLabel_);
+
+    oscToggle_.onClick = [this] {
+        auto& osc = processor_.getOscOutput();
+        if (oscToggle_.getToggleState())
+            osc.enable(oscHostEditor_.getText().toStdString(), (int)oscPortSlider_.getValue());
+        else
+            osc.disable();
+    };
+    addAndMakeVisible(oscToggle_);
+
+    oscHostLabel_.setFont(juce::Font(Theme::FontBase));
+    oscHostLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
+    addAndMakeVisible(oscHostLabel_);
+
+    oscHostEditor_.setFont(juce::Font(Theme::FontBase));
+    oscHostEditor_.onReturnKey = [this] {
+        auto& osc = processor_.getOscOutput();
+        if (oscToggle_.getToggleState())
+            osc.enable(oscHostEditor_.getText().toStdString(), (int)oscPortSlider_.getValue());
+    };
+    addAndMakeVisible(oscHostEditor_);
+
+    oscPortLabel_.setFont(juce::Font(Theme::FontBase));
+    oscPortLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
+    addAndMakeVisible(oscPortLabel_);
+
+    oscPortSlider_.setRange(1024, 65535, 1);
+    oscPortSlider_.setValue(9000, juce::dontSendNotification);
+    oscPortSlider_.setSliderStyle(juce::Slider::LinearBar);
+    oscPortSlider_.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 50, 20);
+    oscPortSlider_.setColour(juce::Slider::trackColourId, Theme::Colors::Accent);
+    oscPortSlider_.setColour(juce::Slider::textBoxTextColourId, Theme::Colors::Text);
+    oscPortSlider_.onValueChange = [this] {
+        auto& osc = processor_.getOscOutput();
+        if (oscToggle_.getToggleState())
+            osc.enable(oscHostEditor_.getText().toStdString(), (int)oscPortSlider_.getValue());
+    };
+    addAndMakeVisible(oscPortSlider_);
+
+    // Init OSC state from processor
+    {
+        auto& osc = processor_.getOscOutput();
+        oscToggle_.setToggleState(osc.isEnabled(), juce::dontSendNotification);
+        oscHostEditor_.setText(juce::String(osc.getHost()));
+        oscPortSlider_.setValue(osc.getPort(), juce::dontSendNotification);
+    }
+
+    // --- Settings tab: hardware section ---
+    hardwareLabel_.setFont(juce::Font(Theme::FontSection, juce::Font::bold));
+    hardwareLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
+    addAndMakeVisible(hardwareLabel_);
+
     connectButton_.onClick = [this] {
         auto& conn = processor_.getConnection();
         if (conn.isConnected()) {
@@ -235,7 +484,6 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     addAndMakeVisible(connectButton_);
     updateConnectButton();
 
-    // --- Toolbar: Phase 5 toggles ---
     fingerColorsToggle_.setToggleState(processor_.getPerFingerColors(), juce::dontSendNotification);
     fingerColorsToggle_.onClick = [this] {
         bool en = fingerColorsToggle_.getToggleState();
@@ -254,157 +502,6 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     };
     dawFeedbackToggle_.setTooltip("DAW MIDI feedback highlights");
     addAndMakeVisible(dawFeedbackToggle_);
-
-    // --- Canvas ---
-    canvas_.addListener(this);
-    addAndMakeVisible(canvas_);
-
-    // --- Sidebar: Tab bar ---
-    tabBar_.addListener(this);
-    addAndMakeVisible(tabBar_);
-
-    // --- Sidebar: Shape tab — color picker ---
-    colorLabel_.setText("COLOR", juce::dontSendNotification);
-    colorLabel_.setFont(juce::Font(Theme::FontSection, juce::Font::bold));
-    colorLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
-    addAndMakeVisible(colorLabel_);
-
-    colorPicker_.addListener(this);
-    colorPicker_.setColor(Color7{0, 80, 127});
-    addAndMakeVisible(colorPicker_);
-
-    // --- Sidebar: Shape tab — visual style controls ---
-    visualLabel_.setFont(juce::Font(Theme::FontSection, juce::Font::bold));
-    visualLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
-    addAndMakeVisible(visualLabel_);
-
-    visualBox_.addItem("Static",        1);
-    visualBox_.addItem("Fill Bar",      2);
-    visualBox_.addItem("Position Dot",  3);
-    visualBox_.addItem("Radial Arc",    4);
-    visualBox_.addItem("Pressure Glow", 5);
-    visualBox_.onChange = [this] {
-        auto singleId = selectionManager_.getSingleSelectedId();
-        if (singleId.empty()) return;
-        auto* s = processor_.getLayout().getShape(singleId);
-        if (!s) return;
-        int id = visualBox_.getSelectedId();
-        VisualStyle vstyle;
-        switch (id) {
-            case 1: vstyle = VisualStyle::Static; break;
-            case 2: vstyle = VisualStyle::FillBar; break;
-            case 3: vstyle = VisualStyle::PositionDot; break;
-            case 4: vstyle = VisualStyle::RadialArc; break;
-            case 5: vstyle = VisualStyle::PressureGlow; break;
-            default: return;
-        }
-        s->visualStyle = visualStyleToString(vstyle);
-        updateVisualControls();
-        // Write visual params
-        auto* vobj = new juce::DynamicObject();
-        if (vstyle == VisualStyle::FillBar)
-            vobj->setProperty("fill_horizontal", fillHorizToggle_.getToggleState());
-        s->visualParams = juce::var(vobj);
-        processor_.getLayout().setBehavior(singleId, s->behavior, s->behaviorParams);
-    };
-    addAndMakeVisible(visualBox_);
-
-    fillHorizLabel_.setFont(juce::Font(Theme::FontBase));
-    fillHorizLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
-    addAndMakeVisible(fillHorizLabel_);
-
-    fillHorizToggle_.onClick = [this] {
-        auto singleId = selectionManager_.getSingleSelectedId();
-        if (singleId.empty()) return;
-        auto* s = processor_.getLayout().getShape(singleId);
-        if (!s) return;
-        auto* vobj = new juce::DynamicObject();
-        vobj->setProperty("fill_horizontal", fillHorizToggle_.getToggleState());
-        s->visualParams = juce::var(vobj);
-        processor_.getLayout().setBehavior(singleId, s->behavior, s->behaviorParams);
-    };
-    addAndMakeVisible(fillHorizToggle_);
-
-    // --- Sidebar: Shape tab — alignment buttons ---
-    alignLabel_.setFont(juce::Font(Theme::FontSection, juce::Font::bold));
-    alignLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
-    addAndMakeVisible(alignLabel_);
-
-    auto setupAlignBtn = [this](juce::TextButton& btn, const juce::String& tip) {
-        btn.setTooltip(tip);
-        addAndMakeVisible(btn);
-    };
-    setupAlignBtn(alignLeftBtn_, "Align Left");
-    setupAlignBtn(alignRightBtn_, "Align Right");
-    setupAlignBtn(alignTopBtn_, "Align Top");
-    setupAlignBtn(alignBottomBtn_, "Align Bottom");
-    setupAlignBtn(alignCHBtn_, "Align Center H");
-    setupAlignBtn(alignCVBtn_, "Align Center V");
-    setupAlignBtn(distHBtn_, "Distribute H");
-    setupAlignBtn(distVBtn_, "Distribute V");
-
-    alignLeftBtn_.onClick   = [this] { performAlignment(AlignmentTools::alignLeft, "Align Left"); };
-    alignRightBtn_.onClick  = [this] { performAlignment(AlignmentTools::alignRight, "Align Right"); };
-    alignTopBtn_.onClick    = [this] { performAlignment(AlignmentTools::alignTop, "Align Top"); };
-    alignBottomBtn_.onClick = [this] { performAlignment(AlignmentTools::alignBottom, "Align Bottom"); };
-    alignCHBtn_.onClick     = [this] { performAlignment(AlignmentTools::alignCenterH, "Align Center H"); };
-    alignCVBtn_.onClick     = [this] { performAlignment(AlignmentTools::alignCenterV, "Align Center V"); };
-    distHBtn_.onClick       = [this] { performAlignment(AlignmentTools::distributeH, "Distribute H"); };
-    distVBtn_.onClick       = [this] { performAlignment(AlignmentTools::distributeV, "Distribute V"); };
-
-    showAlignmentButtons(false);
-
-    // --- Sidebar: Shape tab — morph controls ---
-    morphLabel_.setFont(juce::Font(Theme::FontSection, juce::Font::bold));
-    morphLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
-    addAndMakeVisible(morphLabel_);
-
-    morphSlider_.setRange(0.0, 1.0, 0.01);
-    morphSlider_.setValue(0.5, juce::dontSendNotification);
-    morphSlider_.setSliderStyle(juce::Slider::LinearBar);
-    morphSlider_.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 40, 20);
-    morphSlider_.setColour(juce::Slider::trackColourId, Theme::Colors::Accent);
-    morphSlider_.setColour(juce::Slider::textBoxTextColourId, Theme::Colors::Text);
-    addAndMakeVisible(morphSlider_);
-
-    morphButton_.setTooltip("Create a morphed shape between two selected shapes");
-    morphButton_.onClick = [this] {
-        auto& ids = selectionManager_.getSelectedIds();
-        if (ids.size() != 2) return;
-        auto it = ids.begin();
-        auto* shapeA = processor_.getLayout().getShape(*it++);
-        auto* shapeB = processor_.getLayout().getShape(*it);
-        if (!shapeA || !shapeB) return;
-
-        float t = (float)morphSlider_.getValue();
-        auto newId = "morph_" + std::to_string(++shapeCounterRef_);
-        auto morphed = ShapeMorph::morph(*shapeA, *shapeB, t, newId);
-        if (morphed) {
-            morphed->behavior = shapeA->behavior;
-            morphed->behaviorParams = shapeA->behaviorParams;
-            morphed->visualStyle = shapeA->visualStyle;
-            morphed->visualParams = shapeA->visualParams;
-            processor_.getUndoManager().perform(
-                std::make_unique<AddShapeAction>(processor_.getLayout(), std::move(morphed)));
-            selectionManager_.select(newId);
-        }
-    };
-    addAndMakeVisible(morphButton_);
-
-    morphLabel_.setVisible(false);
-    morphSlider_.setVisible(false);
-    morphButton_.setVisible(false);
-
-    // --- Sidebar: MIDI tab ---
-    midiPanel_.addListener(this);
-    addAndMakeVisible(midiPanel_);
-
-    // --- Sidebar: Output tab ---
-    outputPanel_.addListener(this);
-    outputPanel_.setOscState(processor_.getOscOutput().isEnabled(),
-                             processor_.getOscOutput().getHost(),
-                             processor_.getOscOutput().getPort());
-    addAndMakeVisible(outputPanel_);
 
     // --- Sidebar: Library tab ---
     libLabel_.setFont(juce::Font(Theme::FontSection, juce::Font::bold));
@@ -511,7 +608,7 @@ EraeEditor::~EraeEditor()
     canvas_.removeListener(this);
     colorPicker_.removeListener(this);
     midiPanel_.removeListener(this);
-    outputPanel_.removeListener(this);
+    effectPanel_.removeListener(this);
     tabBar_.removeListener(this);
     selectionManager_.removeListener(this);
     setLookAndFeel(nullptr);
@@ -565,30 +662,46 @@ void EraeEditor::drawToolbarSeparators(juce::Graphics& g)
     float sepTop = 10.0f;
     float sepBottom = (float)Theme::ToolbarHeight - 10.0f;
 
+    // After Select/Paint/Erase
     float x1 = (float)(eraseButton_.getRight() + 5);
     g.drawLine(x1, sepTop, x1, sepBottom, 1.0f);
 
-    float x2 = (float)(pixelDoneButton_.isVisible()
-                        ? pixelDoneButton_.getRight() + 5
-                        : drawPixelButton_.getRight() + 5);
+    // After shape creation tools (Done/Design)
+    float x2;
+    if (canvas_.isDesigning()) {
+        x2 = (float)(designSymVToggle_.getRight() + 5);
+    } else if (pixelDoneButton_.isVisible()) {
+        x2 = (float)(designButton_.getRight() + 5);
+    } else {
+        x2 = (float)(designButton_.getRight() + 5);
+    }
     g.drawLine(x2, sepTop, x2, sepBottom, 1.0f);
 
-    float x3 = (float)(presetSelector_.getRight() + 6);
+    // After brush size
+    float x3 = (float)(brushSizeSelector_.getRight() + 5);
     g.drawLine(x3, sepTop, x3, sepBottom, 1.0f);
+
+    // After undo/redo
+    float x4 = (float)(redoButton_.getRight() + 5);
+    g.drawLine(x4, sepTop, x4, sepBottom, 1.0f);
+
+    // After del/dupe
+    float x5 = (float)(dupeButton_.getRight() + 5);
+    g.drawLine(x5, sepTop, x5, sepBottom, 1.0f);
 }
 
 void EraeEditor::resized()
 {
     auto area = getLocalBounds();
 
-    // Toolbar
+    // ===== Toolbar =====
     auto toolbar = area.removeFromTop(Theme::ToolbarHeight);
     toolbar.reduce(Theme::SpaceMD, 6);
 
     int btnH = toolbar.getHeight();
     int btnW = btnH + 16;
 
-    // Tool group
+    // Tool group: Select Paint Erase
     selectButton_.setBounds(toolbar.removeFromLeft(btnW + 4));
     toolbar.removeFromLeft(Theme::SpaceXS);
     paintButton_.setBounds(toolbar.removeFromLeft(btnW));
@@ -596,7 +709,7 @@ void EraeEditor::resized()
     eraseButton_.setBounds(toolbar.removeFromLeft(btnW));
     toolbar.removeFromLeft(Theme::SpaceLG);
 
-    // Shape creation group
+    // Shape creation group: Rect Circle Hex Poly Pixel Done Design
     drawRectButton_.setBounds(toolbar.removeFromLeft(btnW - 6));
     toolbar.removeFromLeft(Theme::SpaceXS);
     drawCircButton_.setBounds(toolbar.removeFromLeft(btnW + 6));
@@ -612,7 +725,7 @@ void EraeEditor::resized()
     designButton_.setBounds(toolbar.removeFromLeft(btnW + 12));
     toolbar.removeFromLeft(Theme::SpaceXS);
 
-    // Design mode Done/Cancel/Symmetry (overlaid in same region when active)
+    // Design mode Done/Cancel/Symmetry (overlaid when active)
     if (canvas_.isDesigning()) {
         designDoneButton_.setBounds(toolbar.removeFromLeft(btnW));
         toolbar.removeFromLeft(Theme::SpaceXS);
@@ -630,50 +743,27 @@ void EraeEditor::resized()
     brushSizeSelector_.setBounds(toolbar.removeFromLeft(56));
     toolbar.removeFromLeft(Theme::SpaceMD);
 
-    // Presets + New/Save/Load (hidden in design mode but still need layout)
-    presetSelector_.setBounds(toolbar.removeFromLeft(140));
+    // Undo/Redo
+    undoButton_.setBounds(toolbar.removeFromLeft(btnW));
+    toolbar.removeFromLeft(Theme::SpaceXS);
+    redoButton_.setBounds(toolbar.removeFromLeft(btnW));
+    toolbar.removeFromLeft(Theme::SpaceMD);
+
+    // Del/Dupe
+    deleteButton_.setBounds(toolbar.removeFromLeft(btnW - 8));
     toolbar.removeFromLeft(Theme::SpaceSM);
-    newButton_.setBounds(toolbar.removeFromLeft(btnW - 4));
-    toolbar.removeFromLeft(Theme::SpaceXS);
-    saveButton_.setBounds(toolbar.removeFromLeft(btnW + 4));
-    toolbar.removeFromLeft(Theme::SpaceXS);
-    loadButton_.setBounds(toolbar.removeFromLeft(btnW + 4));
+    dupeButton_.setBounds(toolbar.removeFromLeft(btnW));
+    toolbar.removeFromLeft(Theme::SpaceMD);
 
-    // Action buttons (right-aligned)
-    connectButton_.setBounds(toolbar.removeFromRight(78));
-    toolbar.removeFromRight(Theme::SpaceXS);
-    dawFeedbackToggle_.setBounds(toolbar.removeFromRight(68));
-    toolbar.removeFromRight(Theme::SpaceXS);
-    fingerColorsToggle_.setBounds(toolbar.removeFromRight(68));
-    toolbar.removeFromRight(Theme::SpaceSM);
-    pageDupButton_.setBounds(toolbar.removeFromRight(32));
-    toolbar.removeFromRight(Theme::SpaceXS);
-    pageDelButton_.setBounds(toolbar.removeFromRight(24));
-    toolbar.removeFromRight(Theme::SpaceXS);
-    pageAddButton_.setBounds(toolbar.removeFromRight(24));
-    pageNextButton_.setBounds(toolbar.removeFromRight(24));
-    pageLabel_.setBounds(toolbar.removeFromRight(60));
-    pagePrevButton_.setBounds(toolbar.removeFromRight(24));
-    toolbar.removeFromRight(Theme::SpaceSM);
-    toolbar.removeFromRight(Theme::SpaceMD);
+    // Fit (right-aligned)
     zoomFitButton_.setBounds(toolbar.removeFromRight(btnW - 8));
-    toolbar.removeFromRight(Theme::SpaceSM);
-    clearButton_.setBounds(toolbar.removeFromRight(btnW - 2));
-    toolbar.removeFromRight(Theme::SpaceMD);
-    dupeButton_.setBounds(toolbar.removeFromRight(btnW));
-    toolbar.removeFromRight(Theme::SpaceSM);
-    deleteButton_.setBounds(toolbar.removeFromRight(btnW - 8));
-    toolbar.removeFromRight(Theme::SpaceMD);
-    redoButton_.setBounds(toolbar.removeFromRight(btnW));
-    toolbar.removeFromRight(Theme::SpaceXS);
-    undoButton_.setBounds(toolbar.removeFromRight(btnW));
 
-    // Status bar
+    // ===== Status bar =====
     auto statusBar = area.removeFromBottom(Theme::StatusBarHeight);
     statusBar.reduce(Theme::SpaceLG, Theme::SpaceSM);
     statusLabel_.setBounds(statusBar);
 
-    // Sidebar
+    // ===== Sidebar =====
     auto sidebar = area.removeFromRight(Theme::SidebarWidth);
     sidebar.reduce(Theme::SpaceLG, Theme::SpaceLG);
 
@@ -688,83 +778,12 @@ void EraeEditor::resized()
     // Tab content area
     auto tabContent = sidebar;
 
-    // Layout active tab content
     auto activeTab = tabBar_.getActiveTab();
 
-    // ===== Shape Tab =====
+    // ===== Shape Tab (scrollable) =====
     if (activeTab == SidebarTabBar::Shape) {
-        auto content = tabContent;
-
-        colorLabel_.setBounds(content.removeFromTop(18));
-        content.removeFromTop(Theme::SpaceMD);
-
-        int pickerH = std::min(content.getHeight() / 2, 280);
-        colorPicker_.setBounds(content.removeFromTop(pickerH));
-        content.removeFromTop(Theme::SpaceLG);
-
-        // Visual style section (only when single shape selected)
-        if (visualLabel_.isVisible()) {
-            visualLabel_.setBounds(content.removeFromTop(18));
-            content.removeFromTop(3);
-            visualBox_.setBounds(content.removeFromTop(26));
-            content.removeFromTop(5);
-            if (fillHorizToggle_.isVisible()) {
-                auto row = content.removeFromTop(26);
-                fillHorizLabel_.setBounds(row.removeFromLeft(74));
-                fillHorizToggle_.setBounds(row.removeFromLeft(26));
-                content.removeFromTop(3);
-            }
-            content.removeFromTop(Theme::SpaceSM);
-        }
-
-        // Alignment section (when 2+ selected)
-        if (alignLabel_.isVisible()) {
-            alignLabel_.setBounds(content.removeFromTop(18));
-            content.removeFromTop(3);
-            {
-                auto alignRow1 = content.removeFromTop(24);
-                int abw = (alignRow1.getWidth() - 3 * Theme::SpaceXS) / 4;
-                alignLeftBtn_.setBounds(alignRow1.removeFromLeft(abw));
-                alignRow1.removeFromLeft(Theme::SpaceXS);
-                alignRightBtn_.setBounds(alignRow1.removeFromLeft(abw));
-                alignRow1.removeFromLeft(Theme::SpaceXS);
-                alignTopBtn_.setBounds(alignRow1.removeFromLeft(abw));
-                alignRow1.removeFromLeft(Theme::SpaceXS);
-                alignBottomBtn_.setBounds(alignRow1);
-            }
-            content.removeFromTop(3);
-            {
-                auto alignRow2 = content.removeFromTop(24);
-                int abw = (alignRow2.getWidth() - 3 * Theme::SpaceXS) / 4;
-                alignCHBtn_.setBounds(alignRow2.removeFromLeft(abw));
-                alignRow2.removeFromLeft(Theme::SpaceXS);
-                alignCVBtn_.setBounds(alignRow2.removeFromLeft(abw));
-                alignRow2.removeFromLeft(Theme::SpaceXS);
-                distHBtn_.setBounds(alignRow2.removeFromLeft(abw));
-                alignRow2.removeFromLeft(Theme::SpaceXS);
-                distVBtn_.setBounds(alignRow2);
-            }
-            content.removeFromTop(Theme::SpaceSM);
-        }
-
-        // Morph section (when 2 selected)
-        if (morphLabel_.isVisible()) {
-            morphLabel_.setBounds(content.removeFromTop(18));
-            content.removeFromTop(3);
-            morphSlider_.setBounds(content.removeFromTop(24));
-            content.removeFromTop(3);
-            morphButton_.setBounds(content.removeFromTop(24));
-        }
-    }
-
-    // ===== MIDI Tab =====
-    if (activeTab == SidebarTabBar::MIDI) {
-        midiPanel_.setBounds(tabContent);
-    }
-
-    // ===== Output Tab =====
-    if (activeTab == SidebarTabBar::Output) {
-        outputPanel_.setBounds(tabContent);
+        shapeViewport_.setBounds(tabContent);
+        layoutShapeTabContent(tabContent.getWidth() - 8); // minus scrollbar width
     }
 
     // ===== Library Tab =====
@@ -774,7 +793,6 @@ void EraeEditor::resized()
         libLabel_.setBounds(content.removeFromTop(18));
         content.removeFromTop(3);
 
-        // Library list fills available space minus buttons
         int btnAreaH = 24 + 3 + 24;
         auto btnArea = content.removeFromBottom(btnAreaH);
 
@@ -799,9 +817,193 @@ void EraeEditor::resized()
         }
     }
 
-    // Canvas (with 2px inset for recessed effect)
+    // ===== Settings Tab =====
+    if (activeTab == SidebarTabBar::Settings) {
+        auto content = tabContent;
+        int rowH = 26;
+
+        // FILE section
+        fileLabel_.setBounds(content.removeFromTop(18));
+        content.removeFromTop(3);
+        presetSelector_.setBounds(content.removeFromTop(rowH));
+        content.removeFromTop(3);
+        {
+            auto row = content.removeFromTop(rowH);
+            int bw = (row.getWidth() - 2 * Theme::SpaceXS) / 3;
+            newButton_.setBounds(row.removeFromLeft(bw));
+            row.removeFromLeft(Theme::SpaceXS);
+            saveButton_.setBounds(row.removeFromLeft(bw));
+            row.removeFromLeft(Theme::SpaceXS);
+            loadButton_.setBounds(row);
+        }
+        content.removeFromTop(Theme::SpaceLG);
+
+        // PAGES section
+        pagesLabel_.setBounds(content.removeFromTop(18));
+        content.removeFromTop(3);
+        {
+            auto row = content.removeFromTop(rowH);
+            pagePrevButton_.setBounds(row.removeFromLeft(24));
+            pageLabel_.setBounds(row.removeFromLeft(60));
+            pageNextButton_.setBounds(row.removeFromLeft(24));
+            row.removeFromLeft(Theme::SpaceSM);
+            pageAddButton_.setBounds(row.removeFromLeft(24));
+            row.removeFromLeft(Theme::SpaceXS);
+            pageDelButton_.setBounds(row.removeFromLeft(24));
+            row.removeFromLeft(Theme::SpaceXS);
+            pageDupButton_.setBounds(row.removeFromLeft(32));
+        }
+        content.removeFromTop(Theme::SpaceLG);
+
+        // OSC OUTPUT section
+        oscLabel_.setBounds(content.removeFromTop(18));
+        content.removeFromTop(3);
+        oscToggle_.setBounds(content.removeFromTop(22));
+        content.removeFromTop(3);
+        {
+            auto row = content.removeFromTop(22);
+            oscHostLabel_.setBounds(row.removeFromLeft(34));
+            oscHostEditor_.setBounds(row);
+            content.removeFromTop(3);
+        }
+        {
+            auto row = content.removeFromTop(22);
+            oscPortLabel_.setBounds(row.removeFromLeft(34));
+            oscPortSlider_.setBounds(row);
+        }
+        content.removeFromTop(Theme::SpaceLG);
+
+        // HARDWARE section
+        hardwareLabel_.setBounds(content.removeFromTop(18));
+        content.removeFromTop(3);
+        connectButton_.setBounds(content.removeFromTop(rowH));
+        content.removeFromTop(3);
+        {
+            auto row = content.removeFromTop(rowH);
+            fingerColorsToggle_.setBounds(row.removeFromLeft(row.getWidth() / 2));
+            dawFeedbackToggle_.setBounds(row);
+        }
+    }
+
+    // ===== Effects Tab =====
+    if (activeTab == SidebarTabBar::Effects) {
+        effectPanel_.setBounds(tabContent);
+    }
+
+    // ===== Canvas =====
     area.reduce(2, 2);
     canvas_.setBounds(area);
+}
+
+// ============================================================
+// Shape tab content layout (inside scrollable viewport)
+// ============================================================
+
+void EraeEditor::layoutShapeTabContent(int contentWidth)
+{
+    int y = 0;
+    int rowH = 26;
+    int labelW = 74;
+    int w = contentWidth;
+
+    auto singleId = selectionManager_.getSingleSelectedId();
+    bool hasSingle = !singleId.empty();
+    bool multi = selectionManager_.count() > 1;
+
+    // COLOR section
+    colorLabel_.setBounds(0, y, w, 18);
+    y += 18 + Theme::SpaceMD;
+
+    int pickerH = 160;
+    colorPicker_.setBounds(0, y, w, pickerH);
+    y += pickerH + Theme::SpaceLG;
+
+    // VISUAL section (only when single shape selected)
+    if (hasSingle && visualLabel_.isVisible()) {
+        visualLabel_.setBounds(0, y, w, 18);
+        y += 18 + 3;
+        visualBox_.setBounds(0, y, w, rowH);
+        y += rowH + 5;
+        if (fillHorizToggle_.isVisible()) {
+            fillHorizLabel_.setBounds(0, y, labelW, rowH);
+            fillHorizToggle_.setBounds(labelW, y, rowH, rowH);
+            y += rowH + 3;
+        }
+        y += Theme::SpaceSM;
+    }
+
+    // MIDI section (embedded MidiPanel)
+    if (hasSingle) {
+        // Calculate needed height for MidiPanel based on visible controls
+        int midiH = 500; // generous default; MidiPanel uses internal visibility
+        midiPanel_.setBounds(0, y, w, midiH);
+        midiPanel_.resized(); // let it layout internally
+
+        // Measure actual used height by finding lowest visible child
+        int maxBottom = 0;
+        for (auto* child : midiPanel_.getChildren()) {
+            if (child->isVisible())
+                maxBottom = std::max(maxBottom, child->getBottom());
+        }
+        if (maxBottom > 0) {
+            midiH = maxBottom + 6;
+            midiPanel_.setBounds(0, y, w, midiH);
+        }
+        y += midiH + Theme::SpaceSM;
+    }
+
+    // CV OUTPUT section (per-shape)
+    if (hasSingle) {
+        cvLabel_.setBounds(0, y, w, 18);
+        y += 18 + 3;
+        cvEnableLabel_.setBounds(0, y, labelW, rowH);
+        cvEnableToggle_.setBounds(labelW, y, rowH, rowH);
+        y += rowH + 3;
+        if (cvEnableToggle_.getToggleState()) {
+            cvChannelLabel_.setBounds(0, y, labelW, rowH);
+            cvChannelSlider_.setBounds(labelW, y, w - labelW, rowH);
+            y += rowH + 3;
+        }
+        y += Theme::SpaceSM;
+    }
+
+    // ALIGN section (when 2+ selected)
+    if (multi && alignLabel_.isVisible()) {
+        alignLabel_.setBounds(0, y, w, 18);
+        y += 18 + 3;
+        {
+            int abw = (w - 3 * Theme::SpaceXS) / 4;
+            int x = 0;
+            alignLeftBtn_.setBounds(x, y, abw, 24); x += abw + Theme::SpaceXS;
+            alignRightBtn_.setBounds(x, y, abw, 24); x += abw + Theme::SpaceXS;
+            alignTopBtn_.setBounds(x, y, abw, 24); x += abw + Theme::SpaceXS;
+            alignBottomBtn_.setBounds(x, y, w - x, 24);
+        }
+        y += 24 + 3;
+        {
+            int abw = (w - 3 * Theme::SpaceXS) / 4;
+            int x = 0;
+            alignCHBtn_.setBounds(x, y, abw, 24); x += abw + Theme::SpaceXS;
+            alignCVBtn_.setBounds(x, y, abw, 24); x += abw + Theme::SpaceXS;
+            distHBtn_.setBounds(x, y, abw, 24); x += abw + Theme::SpaceXS;
+            distVBtn_.setBounds(x, y, w - x, 24);
+        }
+        y += 24 + Theme::SpaceSM;
+    }
+
+    // MORPH section (when exactly 2 selected)
+    if (morphLabel_.isVisible()) {
+        morphLabel_.setBounds(0, y, w, 18);
+        y += 18 + 3;
+        morphSlider_.setBounds(0, y, w, 24);
+        y += 24 + 3;
+        morphButton_.setBounds(0, y, w, 24);
+        y += 24;
+    }
+
+    y += Theme::SpaceLG; // bottom padding
+
+    shapeContent_.setSize(contentWidth, y);
 }
 
 // ============================================================
@@ -817,23 +1019,25 @@ void EraeEditor::tabChanged(SidebarTabBar::Tab newTab)
 void EraeEditor::showTabContent(SidebarTabBar::Tab tab)
 {
     // Hide all tab content first
-    // Shape tab components
+
+    // Shape tab (viewport)
+    shapeViewport_.setVisible(false);
     colorLabel_.setVisible(false);
     colorPicker_.setVisible(false);
     visualLabel_.setVisible(false);
     visualBox_.setVisible(false);
     fillHorizLabel_.setVisible(false);
     fillHorizToggle_.setVisible(false);
+    midiPanel_.setVisible(false);
+    cvLabel_.setVisible(false);
+    cvEnableLabel_.setVisible(false);
+    cvEnableToggle_.setVisible(false);
+    cvChannelLabel_.setVisible(false);
+    cvChannelSlider_.setVisible(false);
     showAlignmentButtons(false);
     morphLabel_.setVisible(false);
     morphSlider_.setVisible(false);
     morphButton_.setVisible(false);
-
-    // MIDI tab
-    midiPanel_.setVisible(false);
-
-    // Output tab
-    outputPanel_.setVisible(false);
 
     // Library tab
     libLabel_.setVisible(false);
@@ -844,20 +1048,56 @@ void EraeEditor::showTabContent(SidebarTabBar::Tab tab)
     libFlipVBtn_.setVisible(false);
     libDeleteBtn_.setVisible(false);
 
+    // Effects tab
+    effectPanel_.setVisible(false);
+
+    // Settings tab
+    fileLabel_.setVisible(false);
+    presetSelector_.setVisible(false);
+    newButton_.setVisible(false);
+    saveButton_.setVisible(false);
+    loadButton_.setVisible(false);
+    pagesLabel_.setVisible(false);
+    pagePrevButton_.setVisible(false);
+    pageLabel_.setVisible(false);
+    pageNextButton_.setVisible(false);
+    pageAddButton_.setVisible(false);
+    pageDelButton_.setVisible(false);
+    pageDupButton_.setVisible(false);
+    oscLabel_.setVisible(false);
+    oscToggle_.setVisible(false);
+    oscHostLabel_.setVisible(false);
+    oscHostEditor_.setVisible(false);
+    oscPortLabel_.setVisible(false);
+    oscPortSlider_.setVisible(false);
+    hardwareLabel_.setVisible(false);
+    connectButton_.setVisible(false);
+    fingerColorsToggle_.setVisible(false);
+    dawFeedbackToggle_.setVisible(false);
+
     // Show active tab content
     switch (tab) {
         case SidebarTabBar::Shape: {
+            shapeViewport_.setVisible(true);
             colorLabel_.setVisible(true);
             colorPicker_.setVisible(true);
 
             auto singleId = selectionManager_.getSingleSelectedId();
+            bool hasSingle = !singleId.empty();
             bool multi = selectionManager_.count() > 1;
 
             // Visual controls only when single shape selected
-            if (!singleId.empty()) {
+            if (hasSingle) {
                 visualLabel_.setVisible(true);
                 visualBox_.setVisible(true);
                 updateVisualControls();
+                midiPanel_.setVisible(true);
+                cvLabel_.setVisible(true);
+                cvEnableLabel_.setVisible(true);
+                cvEnableToggle_.setVisible(true);
+                bool showCVCh = cvEnableToggle_.getToggleState();
+                cvChannelLabel_.setVisible(showCVCh);
+                cvChannelSlider_.setVisible(showCVCh);
             }
 
             // Alignment when 2+ selected
@@ -872,13 +1112,6 @@ void EraeEditor::showTabContent(SidebarTabBar::Tab tab)
             }
             break;
         }
-        case SidebarTabBar::MIDI:
-            midiPanel_.setVisible(true);
-            break;
-
-        case SidebarTabBar::Output:
-            outputPanel_.setVisible(true);
-            break;
 
         case SidebarTabBar::Library:
             libLabel_.setVisible(true);
@@ -888,6 +1121,35 @@ void EraeEditor::showTabContent(SidebarTabBar::Tab tab)
             libFlipHBtn_.setVisible(true);
             libFlipVBtn_.setVisible(true);
             libDeleteBtn_.setVisible(true);
+            break;
+
+        case SidebarTabBar::Settings:
+            fileLabel_.setVisible(true);
+            presetSelector_.setVisible(true);
+            newButton_.setVisible(true);
+            saveButton_.setVisible(true);
+            loadButton_.setVisible(true);
+            pagesLabel_.setVisible(true);
+            pagePrevButton_.setVisible(true);
+            pageLabel_.setVisible(true);
+            pageNextButton_.setVisible(true);
+            pageAddButton_.setVisible(true);
+            pageDelButton_.setVisible(true);
+            pageDupButton_.setVisible(true);
+            oscLabel_.setVisible(true);
+            oscToggle_.setVisible(true);
+            oscHostLabel_.setVisible(true);
+            oscHostEditor_.setVisible(true);
+            oscPortLabel_.setVisible(true);
+            oscPortSlider_.setVisible(true);
+            hardwareLabel_.setVisible(true);
+            connectButton_.setVisible(true);
+            fingerColorsToggle_.setVisible(true);
+            dawFeedbackToggle_.setVisible(true);
+            break;
+
+        case SidebarTabBar::Effects:
+            effectPanel_.setVisible(true);
             break;
 
         default:
@@ -906,6 +1168,54 @@ void EraeEditor::updateVisualControls()
     bool showFillHoriz = (vstyle == VisualStyle::FillBar);
     fillHorizLabel_.setVisible(showFillHoriz);
     fillHorizToggle_.setVisible(showFillHoriz);
+}
+
+// ============================================================
+// CV helpers (replaces OutputPanel)
+// ============================================================
+
+void EraeEditor::loadCVFromShape(Shape* shape)
+{
+    cvCurrentShape_ = shape;
+    if (!shape) return;
+
+    cvLoading_ = true;
+
+    auto getPBool = [&](const juce::String& key, bool def) -> bool {
+        if (auto* obj = shape->behaviorParams.getDynamicObject())
+            if (obj->hasProperty(key))
+                return (bool)obj->getProperty(key);
+        return def;
+    };
+    auto getP = [&](const juce::String& key, int def) -> int {
+        if (auto* obj = shape->behaviorParams.getDynamicObject())
+            if (obj->hasProperty(key))
+                return (int)obj->getProperty(key);
+        return def;
+    };
+
+    cvEnableToggle_.setToggleState(getPBool("cv_enabled", false), juce::dontSendNotification);
+    cvChannelSlider_.setValue(getP("cv_channel", 0), juce::dontSendNotification);
+
+    cvLoading_ = false;
+}
+
+void EraeEditor::clearCV()
+{
+    cvCurrentShape_ = nullptr;
+}
+
+void EraeEditor::writeCVToShape()
+{
+    if (!cvCurrentShape_) return;
+
+    auto* obj = cvCurrentShape_->behaviorParams.getDynamicObject();
+    if (!obj) {
+        obj = new juce::DynamicObject();
+        cvCurrentShape_->behaviorParams = juce::var(obj);
+    }
+    obj->setProperty("cv_enabled", cvEnableToggle_.getToggleState());
+    obj->setProperty("cv_channel", (int)cvChannelSlider_.getValue());
 }
 
 // ============================================================
@@ -978,6 +1288,13 @@ void EraeEditor::behaviorChanged(const std::string& shapeId)
     }
 }
 
+void EraeEditor::effectChanged(const std::string& shapeId)
+{
+    auto* s = processor_.getLayout().getShape(shapeId);
+    if (s)
+        processor_.getLayout().setBehavior(shapeId, s->behavior, s->behaviorParams);
+}
+
 void EraeEditor::midiLearnRequested(const std::string& shapeId)
 {
     midiLearnShapeId_ = shapeId;
@@ -988,27 +1305,6 @@ void EraeEditor::midiLearnCancelled()
 {
     midiLearnShapeId_.clear();
     processor_.cancelMidiLearn();
-}
-
-// ============================================================
-// OutputPanel::Listener — CV + OSC changes
-// ============================================================
-
-void EraeEditor::cvParamsChanged(const std::string& shapeId)
-{
-    auto* s = processor_.getLayout().getShape(shapeId);
-    if (s) {
-        processor_.getLayout().setBehavior(shapeId, s->behavior, s->behaviorParams);
-    }
-}
-
-void EraeEditor::oscSettingsChanged(bool enabled, const std::string& host, int port)
-{
-    auto& osc = processor_.getOscOutput();
-    if (enabled)
-        osc.enable(host, port);
-    else
-        osc.disable();
 }
 
 // ============================================================
@@ -1033,7 +1329,7 @@ void EraeEditor::selectionChanged()
         if (s) {
             colorPicker_.setColor(s->color);
             midiPanel_.loadShape(s);
-            outputPanel_.loadShape(s);
+            loadCVFromShape(s);
 
             // Visual style controls
             auto vstyle = visualStyleFromString(s->visualStyle);
@@ -1047,10 +1343,13 @@ void EraeEditor::selectionChanged()
             if (auto* vobj = s->visualParams.getDynamicObject())
                 if (vobj->hasProperty("fill_horizontal"))
                     fillHorizToggle_.setToggleState((bool)vobj->getProperty("fill_horizontal"), juce::dontSendNotification);
+
+            effectPanel_.loadShape(s);
         }
     } else {
         midiPanel_.clearShape();
-        outputPanel_.clearShape();
+        effectPanel_.clearShape();
+        clearCV();
     }
 
     // Refresh visible tab content (don't auto-switch)
@@ -1082,7 +1381,6 @@ void EraeEditor::designModeChanged(bool active)
 {
     showDesignToolbar(active);
     if (active) {
-        // Sync toggle states
         designSymHToggle_.setToggleState(canvas_.getDesignSymmetryH(), juce::dontSendNotification);
         designSymVToggle_.setToggleState(canvas_.getDesignSymmetryV(), juce::dontSendNotification);
     }
@@ -1095,7 +1393,6 @@ void EraeEditor::designFinished(std::set<std::pair<int,int>> cells)
 {
     if (cells.empty()) return;
 
-    // Compute bounding box
     auto it = cells.begin();
     int minX = it->first, minY = it->second;
     for (auto& [cx, cy] : cells) {
@@ -1103,24 +1400,20 @@ void EraeEditor::designFinished(std::set<std::pair<int,int>> cells)
         minY = std::min(minY, cy);
     }
 
-    // Build relative cells
     std::vector<std::pair<int,int>> relCells;
     for (auto& [cx, cy] : cells)
         relCells.push_back({cx - minX, cy - minY});
 
-    // Create PixelShape
     auto name = "custom_" + std::to_string(++designShapeCounter_);
     auto shape = std::make_unique<PixelShape>(name, (float)minX, (float)minY, std::move(relCells));
     shape->color = canvas_.getPaintColor();
     shape->colorActive = brighten(canvas_.getPaintColor());
 
-    // Add to library
     library_.addEntry(name, shape.get());
     library_.save(ShapeLibrary::getDefaultLibraryFile());
     libraryList_.updateContent();
     libraryList_.repaint();
 
-    // Switch to Library tab so user sees their new shape
     tabBar_.setActiveTab(SidebarTabBar::Library);
     showTabContent(SidebarTabBar::Library);
     resized();
@@ -1128,10 +1421,7 @@ void EraeEditor::designFinished(std::set<std::pair<int,int>> cells)
 
 void EraeEditor::showDesignToolbar(bool show)
 {
-    // Toggle visibility of normal vs design toolbar elements
     selectButton_.setVisible(!show);
-    // Keep paint/erase/creation tools visible in design mode
-    // but hide Select and some action buttons
     designButton_.setVisible(!show);
     pixelDoneButton_.setVisible(!show && (canvas_.getToolMode() == ToolMode::DrawPixel
                                           || canvas_.getToolMode() == ToolMode::DrawPoly));
@@ -1141,13 +1431,8 @@ void EraeEditor::showDesignToolbar(bool show)
     designSymHToggle_.setVisible(show);
     designSymVToggle_.setVisible(show);
 
-    // Hide some actions that don't apply in design mode
     deleteButton_.setVisible(!show);
     dupeButton_.setVisible(!show);
-    presetSelector_.setVisible(!show);
-    newButton_.setVisible(!show);
-    saveButton_.setVisible(!show);
-    loadButton_.setVisible(!show);
 }
 
 void EraeEditor::updateSelectionInfo()
@@ -1321,7 +1606,6 @@ void EraeEditor::updateStatus()
                          + "/" + juce::String(ml.numPages());
     pageLabel_.setText(pageStr, juce::dontSendNotification);
 
-    // Enforce 8-page limit on add/dup buttons
     bool canAdd = ml.canAddPage();
     pageAddButton_.setEnabled(canAdd);
     pageDupButton_.setEnabled(canAdd);
@@ -1364,6 +1648,22 @@ void EraeEditor::timerCallback()
         canvas_.setHighlightedShapes(daw.getHighlightedShapes());
     else
         canvas_.setHighlightedShapes({});
+
+    // Pass effect states to canvas for visual overlay
+    {
+        auto& effectStates = processor_.getEffectEngine().getEffectStates();
+        if (!effectStates.empty()) {
+            std::map<std::string, EffectParams> effectParams;
+            for (auto& [sid, _] : effectStates) {
+                auto* s = processor_.getLayout().getShape(sid);
+                if (s)
+                    effectParams[sid] = TouchEffectEngine::parseParams(*s);
+            }
+            canvas_.setEffectStates(effectStates, effectParams);
+        } else {
+            canvas_.setEffectStates({}, {});
+        }
+    }
 
     // MIDI learn: poll for result and apply to target shape
     if (!midiLearnShapeId_.empty() && processor_.hasMidiLearnResult()) {
