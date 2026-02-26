@@ -7,7 +7,7 @@ namespace erae {
 
 class SidebarTabBar : public juce::Component {
 public:
-    enum Tab { Shape = 0, Library, Settings, Effects, NumTabs };
+    enum Tab { Shape = 0, Library, Settings, NumTabs };
 
     class Listener {
     public:

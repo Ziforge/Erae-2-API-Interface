@@ -33,6 +33,14 @@ namespace Preset {
     std::vector<std::unique_ptr<Shape>> tonnetz(int rows = 6, int cols = 7, int baseNote = 48,
                                                  int gridW = 42, int gridH = 24);
 
+    // Effect templates — 19 pre-configured shapes with effects
+    struct EffectTemplate {
+        std::string name;
+        std::unique_ptr<Shape> shape;
+        std::string description;
+    };
+    std::vector<EffectTemplate> effectTemplates();
+
     // Generator registry
     using GeneratorFn = std::function<std::vector<std::unique_ptr<Shape>>()>;
 

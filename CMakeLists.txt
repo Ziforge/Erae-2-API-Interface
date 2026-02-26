@@ -124,3 +124,36 @@ target_link_libraries(EraeShapeEditor
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
 )
+
+# ============================================================
+# Test target — model/core level tests (no GUI needed at runtime)
+# ============================================================
+juce_add_gui_app(EraeTests PRODUCT_NAME "Erae Tests")
+
+target_sources(EraeTests
+    PRIVATE
+        Tests/EffectTemplateTests.cpp
+        Source/Model/Preset.cpp
+        Source/Model/Layout.cpp
+)
+
+target_include_directories(EraeTests PRIVATE Source)
+
+target_compile_definitions(EraeTests
+    PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+)
+
+target_compile_options(EraeTests PRIVATE
+    -Wall -Wno-sign-conversion -Wno-overloaded-virtual -Wno-unused-parameter
+)
+
+target_link_libraries(EraeTests
+    PRIVATE
+        juce::juce_gui_basics
+        juce::juce_audio_basics
+    PUBLIC
+        juce::juce_recommended_config_flags
+)

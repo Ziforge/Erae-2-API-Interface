@@ -2,6 +2,7 @@
 
 #include "../Model/Shape.h"
 #include "../Model/Layout.h"
+#include "../Model/Preset.h"
 #include "UndoManager.h"
 #include "LayoutActions.h"
 #include <juce_core/juce_core.h>
@@ -19,11 +20,14 @@ public:
     struct LibraryEntry {
         std::string name;
         std::unique_ptr<Shape> shape;
+        std::string description;  // short effect description (built-ins only)
     };
 
-    ShapeLibrary() = default;
+    ShapeLibrary() { populateBuiltins(); }
 
     int numEntries() const { return (int)entries_.size(); }
+    int builtinCount() const { return builtinCount_; }
+    bool isBuiltin(int index) const { return index >= 0 && index < builtinCount_; }
 
     const LibraryEntry& getEntry(int index) const { return entries_[(size_t)index]; }
 
@@ -34,8 +38,21 @@ public:
 
     void removeEntry(int index)
     {
+        if (index < builtinCount_) return;  // protect built-ins
         if (index >= 0 && index < (int)entries_.size())
             entries_.erase(entries_.begin() + index);
+    }
+
+    void populateBuiltins()
+    {
+        auto templates = Preset::effectTemplates();
+        builtinCount_ = (int)templates.size();
+        // Insert at front in order
+        for (int i = 0; i < (int)templates.size(); ++i)
+            entries_.insert(entries_.begin() + i,
+                            LibraryEntry{std::move(templates[(size_t)i].name),
+                                         std::move(templates[(size_t)i].shape),
+                                         std::move(templates[(size_t)i].description)});
     }
 
     // Clone a library entry and place it on the canvas at (x, y)
@@ -109,14 +126,14 @@ public:
         // Rect, Circle, Hex — symmetric, no internal change needed
     }
 
-    // Persistence
+    // Persistence — only saves user entries (skips built-ins)
     bool save(const juce::File& file) const
     {
         juce::Array<juce::var> arr;
-        for (auto& entry : entries_) {
+        for (int i = builtinCount_; i < (int)entries_.size(); ++i) {
             auto obj = new juce::DynamicObject();
-            obj->setProperty("name", juce::String(entry.name));
-            obj->setProperty("shape", entry.shape->toVar());
+            obj->setProperty("name", juce::String(entries_[(size_t)i].name));
+            obj->setProperty("shape", entries_[(size_t)i].shape->toVar());
             arr.add(juce::var(obj));
         }
         auto root = new juce::DynamicObject();
@@ -126,6 +143,9 @@ public:
 
     bool load(const juce::File& file)
     {
+        entries_.clear();
+        populateBuiltins();  // built-ins always at front
+
         if (!file.existsAsFile()) return false;
         auto parsed = juce::JSON::parse(file.loadFileAsString());
         if (!parsed.isObject()) return false;
@@ -133,7 +153,6 @@ public:
         auto* libArr = parsed.getProperty("library", {}).getArray();
         if (!libArr) return false;
 
-        entries_.clear();
         for (auto& item : *libArr) {
             if (!item.isObject()) continue;
             auto name = item.getProperty("name", "").toString().toStdString();
@@ -155,6 +174,7 @@ public:
 
 private:
     std::vector<LibraryEntry> entries_;
+    int builtinCount_ = 0;
 
     // Parse a single shape from a var (reuses Preset.cpp logic inline)
     static std::unique_ptr<Shape> parseShape(const juce::var& item)

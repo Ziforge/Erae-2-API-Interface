@@ -614,6 +614,129 @@ std::vector<std::unique_ptr<Shape>> tonnetz(int rows, int cols, int baseNote,
 }
 
 // ============================================================
+// effectTemplates — 19 pre-configured shapes with effects
+// ============================================================
+static juce::var makeEffectParams(const std::string& effectType, const std::string& modTarget = "mpe")
+{
+    auto* obj = new juce::DynamicObject();
+
+    // Behavior params (note_pad defaults)
+    obj->setProperty("note", 60);
+    obj->setProperty("channel", 0);
+
+    // Effect sub-object
+    auto* eff = new juce::DynamicObject();
+    eff->setProperty("type", juce::String(effectType));
+    eff->setProperty("speed", 1.0);
+    eff->setProperty("intensity", 0.8);
+    eff->setProperty("decay", 0.5);
+    eff->setProperty("motion_reactive", true);
+    eff->setProperty("use_shape_color", true);
+    eff->setProperty("mod_target", juce::String(modTarget));
+    eff->setProperty("mod_cc", 74);
+    eff->setProperty("mod_channel", 0);
+    eff->setProperty("mod_cv_ch", 0);
+    eff->setProperty("mpe_channel", 1);
+    obj->setProperty("effect", juce::var(eff));
+
+    return juce::var(obj);
+}
+
+std::vector<EffectTemplate> effectTemplates()
+{
+    // Shape types: 'R' = rect (w, h), 'C' = circle (radius in w, h ignored)
+    //              'H' = hex (radius in w, h ignored)
+    struct EffectDef {
+        const char* name;
+        const char* effectType;
+        char shapeType;
+        float w, h;   // rect: width/height; circle/hex: radius (h unused)
+        const char* desc;
+    };
+
+    static const EffectDef defs[] = {
+        // Visual effects — shapes match physical character
+        {"Trail",             "trail",             'R', 10, 8,
+         "Glowing trail follows finger movement. Speed and motion create evolving light paths."},
+        {"Ripple",            "ripple",            'C', 5, 0,
+         "Concentric rings expand from each touch point, like drops in water."},
+        {"Particles",         "particles",         'R', 10, 8,
+         "Burst of particles emitted from touch. Gravity pulls them down, bouncing off edges."},
+        {"Pulse",             "pulse",             'C', 3, 0,
+         "Rhythmic glow oscillates while touched. Speed controls pulse rate."},
+        {"Breathe",           "breathe",           'C', 3, 0,
+         "Smooth sine-wave breathing animation. Gentle swell while finger is held."},
+        {"Spin",              "spin",              'C', 4, 0,
+         "Dots orbit around the touch point. Pressure controls rotation speed."},
+        {"Orbit",             "orbit",             'C', 6, 0,
+         "Two-finger control: first finger sets pivot, second controls orbit radius and speed."},
+        {"Boundary",          "boundary",          'R', 12, 10,
+         "Multiple fingers define a convex hull. The enclosed area lights up."},
+        {"String",            "string",            'R', 18, 4,
+         "Two fingers set string endpoints. Third finger plucks — wave propagates between them."},
+        {"Membrane",          "membrane",          'C', 6, 0,
+         "2D drum head simulation. Touch excites the surface, waves ripple across the grid."},
+        {"Fluid",             "fluid",             'R', 14, 10,
+         "Navier-Stokes fluid sim. Finger drags create swirling currents and density patterns."},
+        {"Spring Lattice",    "spring_lattice",    'R', 10, 10,
+         "Grid of interconnected springs. Touch displaces nodes, energy propagates through lattice."},
+        {"Pendulum",          "pendulum",          'R', 6, 12,
+         "Single or double pendulum. First touch sets pivot, second creates chaotic double pendulum."},
+        {"Collision",         "collision",         'R', 12, 10,
+         "Bouncing balls spawned on touch. Elastic collisions between balls and shape walls."},
+        {"Tombolo",           "tombolo",           'H', 7, 0,
+         "Sandpile automaton. Touch deposits material that flows to lower neighbors."},
+        {"Gravity Well",      "gravity_well",      'C', 5, 0,
+         "Finger creates gravitational mass. Orbiting particles curve around it, confined to shape."},
+        {"Elastic Band",      "elastic_band",      'R', 16, 4,
+         "Chain of spring-connected points. Grab and stretch — tension drives modulation."},
+        {"Bow",               "bow",               'R', 14, 4,
+         "Bowed string physics. Finger velocity and pressure control stick-slip friction excitation."},
+        {"Wave Interference", "wave_interference", 'C', 6, 0,
+         "Each finger emits waves. Multiple fingers create interference patterns across the surface."},
+    };
+
+    std::vector<EffectTemplate> result;
+    constexpr int N = 19;
+
+    for (int i = 0; i < N; ++i) {
+        float hue = (float)(i * 19);  // ~19° apart across 360°
+        auto col     = hsvToRgb7(hue, 0.75f, 0.6f);
+        auto colAct  = hsvToRgb7(hue, 0.75f, 1.0f);
+        auto params  = makeEffectParams(defs[i].effectType);
+        std::string id = std::string("fx_") + defs[i].effectType;
+
+        std::unique_ptr<Shape> s;
+
+        if (defs[i].shapeType == 'C') {
+            auto c = std::make_unique<CircleShape>(id, defs[i].w, defs[i].w, defs[i].w);
+            c->color = col;
+            c->colorActive = colAct;
+            c->behavior = "note_pad";
+            c->behaviorParams = params;
+            c->visualStyle = "pressure_glow";
+            s = std::move(c);
+        } else if (defs[i].shapeType == 'H') {
+            auto h = std::make_unique<HexShape>(id, defs[i].w, defs[i].w, defs[i].w);
+            h->color = col;
+            h->colorActive = colAct;
+            h->behavior = "note_pad";
+            h->behaviorParams = params;
+            h->visualStyle = "pressure_glow";
+            s = std::move(h);
+        } else {
+            auto r = makeRect(id, 0, 0, defs[i].w, defs[i].h, col, colAct, "note_pad", params);
+            r->visualStyle = "pressure_glow";
+            s = std::move(r);
+        }
+
+        result.push_back({defs[i].name, std::move(s), defs[i].desc});
+    }
+
+    return result;
+}
+
+// ============================================================
 // Generator registry
 // ============================================================
 const std::vector<GeneratorEntry>& getGenerators()
