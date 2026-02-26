@@ -20,6 +20,7 @@ A JUCE-based visual layout editor and MIDI controller for the **Erae Touch II** 
 - **Per-Finger Colors** - Each finger gets a distinct color (10-color palette) on both the screen overlay and hardware surface
 - **DAW Feedback** - Incoming MIDI note-on/off from the DAW highlights the corresponding shapes with a pulsing glow, so pads light up during playback
 - **Preset Library** - Built-in presets (Drum Pads, Piano, Wicki-Hayden, Fader Bank, XY Pad, Buchla Thunder) plus save/load of custom layouts as JSON
+- **Shape Library** - Save any shape to a persistent reusable library. Browse saved shapes, place them on the canvas, flip horizontally/vertically. Library persists across sessions as JSON
 - **CV Output** - Each shape can optionally output CV signals on audio channels (1V/oct pitch, gate, pressure, slide). Designed for bridging to modular synths via DC-coupled audio interfaces or FPGA USB audio (120-channel Zybo modular)
 - **Runs as Standalone or VST3** - Use it as a standalone app or load it in your DAW
 
@@ -28,7 +29,8 @@ A JUCE-based visual layout editor and MIDI controller for the **Erae Touch II** 
 - **Rectangle** - Axis-aligned rectangular zones
 - **Circle** - Circular touch areas
 - **Hexagon** - Regular hexagonal pads (great for isomorphic layouts)
-- **Polygon** - Arbitrary convex/concave polygons defined by vertices (used for parallelogram wings in the Buchla Thunder preset)
+- **Polygon** - Arbitrary convex/concave polygons defined by vertices (used for parallelogram wings in the Buchla Thunder preset). Draw interactively with the **Poly** tool (P key): click vertices, double-click or Enter to close
+- **Pixel** - Freeform shapes built by painting individual grid cells. Use the **Pixel** tool (G key): left-click/drag to paint, right-click to erase, Ctrl+Z to undo last stroke, Enter to finalize into a single shape
 
 ## Visual Styles
 
@@ -58,7 +60,9 @@ Each shape can have an independent visual style that animates on the hardware su
 | Ctrl+C / X / V | Copy / Cut / Paste |
 | Ctrl+D | Duplicate selection |
 | Delete / Backspace | Delete selection |
-| V / B / E / R / C / H | Select / Paint / Erase / Rect / Circle / Hex tool |
+| V / B / E / R / C / H / P / G | Select / Paint / Erase / Rect / Circle / Hex / Poly / Pixel tool |
+| Enter | Finalize polygon or pixel shape |
+| Escape | Cancel polygon or pixel creation |
 | Arrow keys | Nudge selected shapes (Shift = 5px) |
 | Scroll wheel | Zoom in/out |
 | Middle-click drag | Pan canvas |

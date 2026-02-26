@@ -25,9 +25,17 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     selectButton_.onClick   = [this] { setTool(ToolMode::Select); };
     paintButton_.onClick    = [this] { setTool(ToolMode::Paint); };
     eraseButton_.onClick    = [this] { setTool(ToolMode::Erase); };
-    drawRectButton_.onClick = [this] { setTool(ToolMode::DrawRect); };
-    drawCircButton_.onClick = [this] { setTool(ToolMode::DrawCircle); };
-    drawHexButton_.onClick  = [this] { setTool(ToolMode::DrawHex); };
+    drawRectButton_.onClick  = [this] { setTool(ToolMode::DrawRect); };
+    drawCircButton_.onClick  = [this] { setTool(ToolMode::DrawCircle); };
+    drawHexButton_.onClick   = [this] { setTool(ToolMode::DrawHex); };
+    drawPolyButton_.onClick  = [this] { setTool(ToolMode::DrawPoly); };
+    drawPixelButton_.onClick = [this] { setTool(ToolMode::DrawPixel); };
+    pixelDoneButton_.onClick = [this] {
+        if (canvas_.isCreatingPoly())
+            canvas_.finishPolygonCreation();
+        else
+            canvas_.finishPixelCreation();
+    };
 
     selectButton_.setTooltip("Select tool (V)");
     paintButton_.setTooltip("Paint pixels (B)");
@@ -35,6 +43,9 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     drawRectButton_.setTooltip("Draw rectangle (R)");
     drawCircButton_.setTooltip("Draw circle (C)");
     drawHexButton_.setTooltip("Draw hexagon (H)");
+    drawPolyButton_.setTooltip("Draw polygon (P)");
+    drawPixelButton_.setTooltip("Draw pixel shape (G)");
+    pixelDoneButton_.setTooltip("Finalize pixel shape (Enter)");
 
     addAndMakeVisible(selectButton_);
     addAndMakeVisible(paintButton_);
@@ -42,6 +53,10 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     addAndMakeVisible(drawRectButton_);
     addAndMakeVisible(drawCircButton_);
     addAndMakeVisible(drawHexButton_);
+    addAndMakeVisible(drawPolyButton_);
+    addAndMakeVisible(drawPixelButton_);
+    pixelDoneButton_.setVisible(false);
+    addAndMakeVisible(pixelDoneButton_);
 
     // --- Toolbar: brush size ---
     brushSizeSelector_.addItem("1px", 1);
@@ -85,6 +100,15 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     };
     zoomFitButton_.onClick = [this] { canvas_.zoomToFit(); };
 
+    newButton_.onClick = [this] {
+        auto& ml = processor_.getMultiLayout();
+        ml.reset();
+        canvas_.setLayout(ml.currentPage());
+        selectionManager_.clear();
+        processor_.getDawFeedback().updateFromLayout(ml.currentPage());
+        processor_.getUndoManager().clear();
+        updateStatus();
+    };
     saveButton_.onClick = [this] { savePresetToFile(); };
     loadButton_.onClick = [this] { loadPresetFromFile(); };
 
@@ -92,6 +116,7 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     dupeButton_.setTooltip("Duplicate selected (Ctrl+D)");
     clearButton_.setTooltip("Clear all shapes");
     zoomFitButton_.setTooltip("Zoom to fit");
+    newButton_.setTooltip("New blank layout");
     saveButton_.setTooltip("Save preset to file");
     loadButton_.setTooltip("Load preset from file");
 
@@ -99,6 +124,7 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     addAndMakeVisible(dupeButton_);
     addAndMakeVisible(clearButton_);
     addAndMakeVisible(zoomFitButton_);
+    addAndMakeVisible(newButton_);
     addAndMakeVisible(saveButton_);
     addAndMakeVisible(loadButton_);
 
@@ -125,6 +151,7 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     };
     pageAddButton_.onClick = [this] {
         auto& ml = processor_.getMultiLayout();
+        if (!ml.canAddPage()) return;
         ml.addPage();
         canvas_.setLayout(ml.currentPage());
         selectionManager_.clear();
@@ -143,6 +170,7 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     };
     pageDupButton_.onClick = [this] {
         auto& ml = processor_.getMultiLayout();
+        if (!ml.canAddPage()) return;
         ml.duplicatePage(ml.currentPageIndex());
         canvas_.setLayout(ml.currentPage());
         selectionManager_.clear();
@@ -292,6 +320,81 @@ EraeEditor::EraeEditor(EraeProcessor& p)
 
     showAlignmentButtons(false);
 
+    // --- Sidebar: Shape Library ---
+    libLabel_.setFont(juce::Font(Theme::FontSection, juce::Font::bold));
+    libLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
+    addAndMakeVisible(libLabel_);
+
+    libraryListModel_.library = &library_;
+    libraryList_.setModel(&libraryListModel_);
+    libraryList_.setRowHeight(20);
+    libraryList_.setColour(juce::ListBox::backgroundColourId, Theme::Colors::ButtonBg);
+    libraryList_.setColour(juce::ListBox::outlineColourId, Theme::Colors::Separator);
+    addAndMakeVisible(libraryList_);
+
+    libSaveBtn_.setTooltip("Save selected canvas shape to library");
+    libSaveBtn_.onClick = [this] {
+        auto selId = selectionManager_.getSingleSelectedId();
+        if (selId.empty()) return;
+        auto* s = processor_.getLayout().getShape(selId);
+        if (!s) return;
+        auto name = s->typeString() + "_" + std::to_string(library_.numEntries() + 1);
+        library_.addEntry(name, s);
+        library_.save(ShapeLibrary::getDefaultLibraryFile());
+        libraryList_.updateContent();
+        libraryList_.repaint();
+    };
+    addAndMakeVisible(libSaveBtn_);
+
+    libPlaceBtn_.setTooltip("Place selected library entry on canvas");
+    libPlaceBtn_.onClick = [this] {
+        int row = libraryList_.getSelectedRow();
+        if (row < 0) return;
+        auto id = library_.placeOnCanvas(row, processor_.getLayout(),
+                                          processor_.getUndoManager(),
+                                          10.0f, 10.0f, shapeCounterRef_);
+        if (!id.empty())
+            selectionManager_.select(id);
+    };
+    addAndMakeVisible(libPlaceBtn_);
+
+    libFlipHBtn_.setTooltip("Flip selected shape horizontally");
+    libFlipHBtn_.onClick = [this] {
+        auto selId = selectionManager_.getSingleSelectedId();
+        if (selId.empty()) return;
+        auto* s = processor_.getLayout().getShape(selId);
+        if (!s) return;
+        ShapeLibrary::flipHorizontal(*s);
+        processor_.getLayout().notifyListeners();
+    };
+    addAndMakeVisible(libFlipHBtn_);
+
+    libFlipVBtn_.setTooltip("Flip selected shape vertically");
+    libFlipVBtn_.onClick = [this] {
+        auto selId = selectionManager_.getSingleSelectedId();
+        if (selId.empty()) return;
+        auto* s = processor_.getLayout().getShape(selId);
+        if (!s) return;
+        ShapeLibrary::flipVertical(*s);
+        processor_.getLayout().notifyListeners();
+    };
+    addAndMakeVisible(libFlipVBtn_);
+
+    libDeleteBtn_.setTooltip("Remove entry from library");
+    libDeleteBtn_.onClick = [this] {
+        int row = libraryList_.getSelectedRow();
+        if (row < 0) return;
+        library_.removeEntry(row);
+        library_.save(ShapeLibrary::getDefaultLibraryFile());
+        libraryList_.updateContent();
+        libraryList_.repaint();
+    };
+    addAndMakeVisible(libDeleteBtn_);
+
+    // Load library from disk
+    library_.load(ShapeLibrary::getDefaultLibraryFile());
+    libraryList_.updateContent();
+
     // --- Status bar ---
     statusLabel_.setFont(juce::Font(Theme::FontStatus));
     statusLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
@@ -371,7 +474,9 @@ void EraeEditor::drawToolbarSeparators(juce::Graphics& g)
     float x1 = (float)(eraseButton_.getRight() + 5);
     g.drawLine(x1, sepTop, x1, sepBottom, 1.0f);
 
-    float x2 = (float)(drawHexButton_.getRight() + 5);
+    float x2 = (float)(pixelDoneButton_.isVisible()
+                        ? pixelDoneButton_.getRight() + 5
+                        : drawPixelButton_.getRight() + 5);
     g.drawLine(x2, sepTop, x2, sepBottom, 1.0f);
 
     float x3 = (float)(presetSelector_.getRight() + 6);
@@ -403,15 +508,23 @@ void EraeEditor::resized()
     drawCircButton_.setBounds(toolbar.removeFromLeft(btnW + 6));
     toolbar.removeFromLeft(Theme::SpaceXS);
     drawHexButton_.setBounds(toolbar.removeFromLeft(btnW - 8));
+    toolbar.removeFromLeft(Theme::SpaceXS);
+    drawPolyButton_.setBounds(toolbar.removeFromLeft(btnW));
+    toolbar.removeFromLeft(Theme::SpaceXS);
+    drawPixelButton_.setBounds(toolbar.removeFromLeft(btnW + 4));
+    toolbar.removeFromLeft(Theme::SpaceXS);
+    pixelDoneButton_.setBounds(toolbar.removeFromLeft(btnW));
     toolbar.removeFromLeft(Theme::SpaceLG);
 
     // Brush size
     brushSizeSelector_.setBounds(toolbar.removeFromLeft(56));
     toolbar.removeFromLeft(Theme::SpaceMD);
 
-    // Presets + Save/Load
+    // Presets + New/Save/Load
     presetSelector_.setBounds(toolbar.removeFromLeft(140));
     toolbar.removeFromLeft(Theme::SpaceSM);
+    newButton_.setBounds(toolbar.removeFromLeft(btnW - 4));
+    toolbar.removeFromLeft(Theme::SpaceXS);
     saveButton_.setBounds(toolbar.removeFromLeft(btnW + 4));
     toolbar.removeFromLeft(Theme::SpaceXS);
     loadButton_.setBounds(toolbar.removeFromLeft(btnW + 4));
@@ -494,6 +607,33 @@ void EraeEditor::resized()
     }
     sidebar.removeFromTop(Theme::SpaceLG);
 
+    // Shape Library section
+    {
+        auto libArea = sidebar.removeFromBottom(170);
+        libLabel_.setBounds(libArea.removeFromTop(18));
+        libArea.removeFromTop(3);
+        libraryList_.setBounds(libArea.removeFromTop(80));
+        libArea.removeFromTop(3);
+        {
+            auto btnRow1 = libArea.removeFromTop(24);
+            int lbw = (btnRow1.getWidth() - 2 * Theme::SpaceXS) / 3;
+            libSaveBtn_.setBounds(btnRow1.removeFromLeft(lbw));
+            btnRow1.removeFromLeft(Theme::SpaceXS);
+            libPlaceBtn_.setBounds(btnRow1.removeFromLeft(lbw));
+            btnRow1.removeFromLeft(Theme::SpaceXS);
+            libDeleteBtn_.setBounds(btnRow1);
+        }
+        libArea.removeFromTop(3);
+        {
+            auto btnRow2 = libArea.removeFromTop(24);
+            int lbw = (btnRow2.getWidth() - Theme::SpaceXS) / 2;
+            libFlipHBtn_.setBounds(btnRow2.removeFromLeft(lbw));
+            btnRow2.removeFromLeft(Theme::SpaceXS);
+            libFlipVBtn_.setBounds(btnRow2);
+        }
+    }
+    sidebar.removeFromBottom(Theme::SpaceLG);
+
     // OSC settings section (at bottom of sidebar)
     auto oscArea = sidebar.removeFromBottom(110);
     oscLabel_.setBounds(oscArea.removeFromTop(18));
@@ -543,12 +683,21 @@ void EraeEditor::updateToolButtons()
                       active ? Theme::Colors::TextBright : Theme::Colors::Text);
     };
 
-    style(selectButton_,   mode == ToolMode::Select);
-    style(paintButton_,    mode == ToolMode::Paint);
-    style(eraseButton_,    mode == ToolMode::Erase);
-    style(drawRectButton_, mode == ToolMode::DrawRect);
-    style(drawCircButton_, mode == ToolMode::DrawCircle);
-    style(drawHexButton_,  mode == ToolMode::DrawHex);
+    style(selectButton_,    mode == ToolMode::Select);
+    style(paintButton_,     mode == ToolMode::Paint);
+    style(eraseButton_,     mode == ToolMode::Erase);
+    style(drawRectButton_,  mode == ToolMode::DrawRect);
+    style(drawCircButton_,  mode == ToolMode::DrawCircle);
+    style(drawHexButton_,   mode == ToolMode::DrawHex);
+    style(drawPolyButton_,  mode == ToolMode::DrawPoly);
+    style(drawPixelButton_, mode == ToolMode::DrawPixel);
+
+    // Show "Done" button only in DrawPixel/DrawPoly mode
+    pixelDoneButton_.setVisible(mode == ToolMode::DrawPixel || mode == ToolMode::DrawPoly);
+    if (mode == ToolMode::DrawPoly)
+        pixelDoneButton_.setButtonText("Done");
+    else
+        pixelDoneButton_.setButtonText("Done");
 }
 
 // ============================================================
@@ -663,6 +812,9 @@ void EraeEditor::updateSelectionInfo()
     } else if (s->type == ShapeType::Hex) {
         auto* h = static_cast<HexShape*>(s);
         info << "  R: " << juce::String(h->radius, 1);
+    } else if (s->type == ShapeType::Pixel) {
+        auto* p = static_cast<PixelShape*>(s);
+        info << "  Cells: " << juce::String((int)p->relCells.size());
     }
 
     selectionLabel_.setText(info, juce::dontSendNotification);
@@ -780,6 +932,8 @@ void EraeEditor::updateStatus()
         case ToolMode::DrawRect:   modeName = "Draw Rect"; break;
         case ToolMode::DrawCircle: modeName = "Draw Circle"; break;
         case ToolMode::DrawHex:    modeName = "Draw Hex"; break;
+        case ToolMode::DrawPoly:   modeName = "Draw Poly"; break;
+        case ToolMode::DrawPixel:  modeName = "Draw Pixel"; break;
     }
 
     auto& conn = processor_.getConnection();
@@ -789,6 +943,12 @@ void EraeEditor::updateStatus()
     juce::String pageStr = "Page " + juce::String(ml.currentPageIndex() + 1)
                          + "/" + juce::String(ml.numPages());
     pageLabel_.setText(pageStr, juce::dontSendNotification);
+
+    // Enforce 8-page limit on add/dup buttons
+    bool canAdd = ml.canAddPage();
+    pageAddButton_.setEnabled(canAdd);
+    pageDupButton_.setEnabled(canAdd);
+    pageDelButton_.setEnabled(ml.numPages() > 1);
 
     statusLabel_.setText(
         juce::String(layout.numShapes()) + " shapes  |  " +

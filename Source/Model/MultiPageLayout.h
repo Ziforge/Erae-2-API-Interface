@@ -10,6 +10,8 @@ namespace erae {
 
 class MultiPageLayout {
 public:
+    static constexpr int MaxPages = 8; // Erae II API supports up to 8 pages
+
     class Listener {
     public:
         virtual ~Listener() = default;
@@ -38,10 +40,21 @@ public:
         }
     }
 
+    bool canAddPage() const { return (int)pages_.size() < MaxPages; }
+
     void addPage()
     {
+        if (!canAddPage()) return;
         pages_.push_back(std::make_unique<Layout>());
         switchToPage((int)pages_.size() - 1);
+    }
+
+    void reset()
+    {
+        pages_.clear();
+        currentIndex_ = 0;
+        pages_.push_back(std::make_unique<Layout>());
+        notifyPageChanged();
     }
 
     void removePage(int index)
@@ -57,6 +70,7 @@ public:
 
     void duplicatePage(int index)
     {
+        if (!canAddPage()) return;
         if (index < 0 || index >= (int)pages_.size()) return;
 
         auto newPage = std::make_unique<Layout>();
@@ -102,7 +116,7 @@ public:
             if (auto* pagesArr = data.getProperty("pages", {}).getArray()) {
                 for (auto& pageData : *pagesArr) {
                     auto page = std::make_unique<Layout>();
-                    if (auto* shapesArr = pageData.getProperty("shapes", {}).getArray()) {
+                    if (pageData.getProperty("shapes", {}).getArray()) {
                         auto shapes = Preset::fromJSON(juce::JSON::toString(pageData));
                         if (!shapes.empty())
                             page->setShapes(std::move(shapes));

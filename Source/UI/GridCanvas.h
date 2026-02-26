@@ -13,7 +13,7 @@
 
 namespace erae {
 
-enum class ToolMode { Select, Paint, Erase, DrawRect, DrawCircle, DrawHex };
+enum class ToolMode { Select, Paint, Erase, DrawRect, DrawCircle, DrawHex, DrawPoly, DrawPixel };
 
 // Handle positions for selected shape resize
 enum class HandlePos { None, TopLeft, Top, TopRight, Right, BottomRight, Bottom, BottomLeft, Left };
@@ -89,6 +89,14 @@ public:
     void setHighlightedShapes(const std::set<std::string>& ids);
     void setPerFingerColors(bool enabled) { perFingerColors_ = enabled; }
 
+    // Poly/pixel creation (public for toolbar Done button)
+    void finishPolygonCreation();
+    void cancelPolygonCreation();
+    void finishPixelCreation();
+    void cancelPixelCreation();
+    bool isCreatingPixelShape() const { return creatingPixelShape_; }
+    bool isCreatingPoly() const { return creatingPoly_; }
+
     void addListener(Listener* l) { canvasListeners_.push_back(l); }
     void removeListener(Listener* l) {
         canvasListeners_.erase(std::remove(canvasListeners_.begin(), canvasListeners_.end(), l),
@@ -102,6 +110,8 @@ private:
     void drawHoverHighlight(juce::Graphics& g);
     void drawSelection(juce::Graphics& g);
     void drawCreationPreview(juce::Graphics& g);
+    void drawPolygonCreationPreview(juce::Graphics& g);
+    void drawPixelCreationPreview(juce::Graphics& g);
     void drawCursor(juce::Graphics& g);
     void drawFingerOverlay(juce::Graphics& g);
     void drawCoordinateReadout(juce::Graphics& g);
@@ -124,6 +134,7 @@ private:
 
     // Shape creation
     void finishCreation();
+    void undoPixelStroke();
     std::string nextShapeId();
 
     // Grid snap
@@ -163,6 +174,18 @@ private:
     bool creating_ = false;
     juce::Point<float> createStartGrid_;
     juce::Point<float> createEndGrid_;
+
+    // Polygon creation state
+    bool creatingPoly_ = false;
+    std::vector<juce::Point<float>> polyVertices_;
+    juce::Point<float> polyRubberBand_;
+
+    // Pixel shape creation state
+    bool creatingPixelShape_ = false;
+    std::set<std::pair<int,int>> pixelCells_;
+    std::vector<std::vector<std::pair<int,int>>> pixelStrokeHistory_;
+    std::set<std::pair<int,int>> currentStroke_;
+    bool pixelErasing_ = false;
 
     // Cursor & hover
     juce::Point<float> cursorGrid_ {-1, -1};

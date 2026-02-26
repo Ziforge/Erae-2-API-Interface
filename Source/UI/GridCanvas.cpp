@@ -36,6 +36,10 @@ void GridCanvas::setLayout(Layout& newLayout)
 
 void GridCanvas::setToolMode(ToolMode mode)
 {
+    // Cancel any in-progress creation when switching tools
+    cancelPolygonCreation();
+    cancelPixelCreation();
+
     toolMode_ = mode;
     creating_ = false;
     painting_ = false;
@@ -46,7 +50,9 @@ void GridCanvas::setToolMode(ToolMode mode)
         case ToolMode::Erase:      setMouseCursor(juce::MouseCursor::CrosshairCursor); break;
         case ToolMode::DrawRect:
         case ToolMode::DrawCircle:
-        case ToolMode::DrawHex:    setMouseCursor(juce::MouseCursor::CrosshairCursor); break;
+        case ToolMode::DrawHex:
+        case ToolMode::DrawPoly:
+        case ToolMode::DrawPixel:  setMouseCursor(juce::MouseCursor::CrosshairCursor); break;
     }
     repaint();
 }
@@ -347,6 +353,111 @@ void GridCanvas::finishCreation()
 }
 
 // ============================================================
+// Polygon creation
+// ============================================================
+
+void GridCanvas::finishPolygonCreation()
+{
+    if (polyVertices_.size() < 3) { cancelPolygonCreation(); return; }
+
+    // Find origin (min x, min y)
+    float minX = polyVertices_[0].x, minY = polyVertices_[0].y;
+    for (auto& v : polyVertices_) {
+        minX = std::min(minX, v.x);
+        minY = std::min(minY, v.y);
+    }
+
+    // Build relative vertices
+    std::vector<std::pair<float,float>> relVerts;
+    for (auto& v : polyVertices_)
+        relVerts.push_back({v.x - minX, v.y - minY});
+
+    auto id = nextShapeId();
+    auto shape = std::make_unique<PolygonShape>(id, minX, minY, std::move(relVerts));
+    shape->color = paintColor_;
+    shape->colorActive = brighten(paintColor_);
+    shape->behavior = "trigger";
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty("note", layout_->nextAvailableNote(60));
+    obj->setProperty("channel", 0);
+    obj->setProperty("velocity", -1);
+    shape->behaviorParams = juce::var(obj);
+    undoMgr_.perform(std::make_unique<AddShapeAction>(*layout_, std::move(shape)));
+    selMgr_.select(id);
+
+    polyVertices_.clear();
+    creatingPoly_ = false;
+    repaint();
+}
+
+void GridCanvas::cancelPolygonCreation()
+{
+    polyVertices_.clear();
+    creatingPoly_ = false;
+}
+
+// ============================================================
+// Pixel shape creation
+// ============================================================
+
+void GridCanvas::finishPixelCreation()
+{
+    if (pixelCells_.empty()) { cancelPixelCreation(); return; }
+
+    // Find origin (min x, min y)
+    auto it = pixelCells_.begin();
+    int minX = it->first, minY = it->second;
+    for (auto& [cx, cy] : pixelCells_) {
+        minX = std::min(minX, cx);
+        minY = std::min(minY, cy);
+    }
+
+    // Build relative cells
+    std::vector<std::pair<int,int>> relCells;
+    for (auto& [cx, cy] : pixelCells_)
+        relCells.push_back({cx - minX, cy - minY});
+
+    auto id = nextShapeId();
+    auto shape = std::make_unique<PixelShape>(id, (float)minX, (float)minY, std::move(relCells));
+    shape->color = paintColor_;
+    shape->colorActive = brighten(paintColor_);
+    shape->behavior = "trigger";
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty("note", layout_->nextAvailableNote(60));
+    obj->setProperty("channel", 0);
+    obj->setProperty("velocity", -1);
+    shape->behaviorParams = juce::var(obj);
+    undoMgr_.perform(std::make_unique<AddShapeAction>(*layout_, std::move(shape)));
+    selMgr_.select(id);
+
+    pixelCells_.clear();
+    pixelStrokeHistory_.clear();
+    currentStroke_.clear();
+    creatingPixelShape_ = false;
+    repaint();
+}
+
+void GridCanvas::cancelPixelCreation()
+{
+    pixelCells_.clear();
+    pixelStrokeHistory_.clear();
+    currentStroke_.clear();
+    creatingPixelShape_ = false;
+}
+
+void GridCanvas::undoPixelStroke()
+{
+    if (pixelStrokeHistory_.empty()) return;
+    pixelStrokeHistory_.pop_back();
+    // Rebuild pixelCells_ from remaining strokes
+    pixelCells_.clear();
+    for (auto& stroke : pixelStrokeHistory_)
+        for (auto& cell : stroke)
+            pixelCells_.insert(cell);
+    repaint();
+}
+
+// ============================================================
 // Rendering
 // ============================================================
 
@@ -359,6 +470,8 @@ void GridCanvas::paint(juce::Graphics& g)
     drawFingerOverlay(g);
     drawSelection(g);
     drawCreationPreview(g);
+    drawPolygonCreationPreview(g);
+    drawPixelCreationPreview(g);
     drawCursor(g);
     drawCoordinateReadout(g);
 }
@@ -562,16 +675,92 @@ void GridCanvas::drawCreationPreview(juce::Graphics& g)
     }
 }
 
+void GridCanvas::drawPolygonCreationPreview(juce::Graphics& g)
+{
+    if (!creatingPoly_ || polyVertices_.empty()) return;
+
+    auto col = paintColor_.toJuceColour().withAlpha(0.35f);
+    auto borderCol = Theme::Colors::Accent.withAlpha(0.9f);
+
+    // Build path from vertices
+    juce::Path path;
+    auto firstScreen = gridToScreen(polyVertices_[0]);
+    path.startNewSubPath(firstScreen.x, firstScreen.y);
+    for (size_t i = 1; i < polyVertices_.size(); ++i) {
+        auto p = gridToScreen(polyVertices_[i]);
+        path.lineTo(p.x, p.y);
+    }
+
+    // If 3+ vertices, close and fill
+    if (polyVertices_.size() >= 3) {
+        juce::Path fillPath(path);
+        fillPath.closeSubPath();
+        g.setColour(col);
+        g.fillPath(fillPath);
+    }
+
+    // Draw solid edges
+    g.setColour(borderCol);
+    g.strokePath(path, juce::PathStrokeType(1.5f));
+
+    // Dashed rubber-band from last vertex to cursor
+    auto lastScreen = gridToScreen(polyVertices_.back());
+    auto cursorScreen = gridToScreen(polyRubberBand_);
+    juce::Path rubberLine;
+    rubberLine.startNewSubPath(lastScreen.x, lastScreen.y);
+    rubberLine.lineTo(cursorScreen.x, cursorScreen.y);
+
+    float dashes[] = {4.0f, 4.0f};
+    juce::PathStrokeType dashStroke(1.0f);
+    juce::Path dashedPath;
+    dashStroke.createDashedStroke(dashedPath, rubberLine, dashes, 2);
+    g.setColour(borderCol.withAlpha(0.6f));
+    g.fillPath(dashedPath);
+
+    // Vertex dots
+    g.setColour(Theme::Colors::HandleFill);
+    for (auto& v : polyVertices_) {
+        auto sp = gridToScreen(v);
+        g.fillEllipse(sp.x - 3, sp.y - 3, 6, 6);
+    }
+    g.setColour(Theme::Colors::HandleBorder);
+    for (auto& v : polyVertices_) {
+        auto sp = gridToScreen(v);
+        g.drawEllipse(sp.x - 3, sp.y - 3, 6, 6, 1.0f);
+    }
+}
+
+void GridCanvas::drawPixelCreationPreview(juce::Graphics& g)
+{
+    if (!creatingPixelShape_ && pixelCells_.empty()) return;
+
+    auto col = paintColor_.toJuceColour().withAlpha(0.35f);
+    g.setColour(col);
+    for (auto& [cx, cy] : pixelCells_) {
+        auto cellRect = gridCellToScreen((float)cx, (float)cy, 1.0f, 1.0f);
+        g.fillRect(cellRect);
+    }
+
+    // Border around each cell
+    auto borderCol = Theme::Colors::Accent.withAlpha(0.4f);
+    g.setColour(borderCol);
+    for (auto& [cx, cy] : pixelCells_) {
+        auto cellRect = gridCellToScreen((float)cx, (float)cy, 1.0f, 1.0f);
+        g.drawRect(cellRect, 0.5f);
+    }
+}
+
 void GridCanvas::drawCursor(juce::Graphics& g)
 {
-    if (toolMode_ != ToolMode::Paint && toolMode_ != ToolMode::Erase) return;
+    if (toolMode_ != ToolMode::Paint && toolMode_ != ToolMode::Erase
+        && toolMode_ != ToolMode::DrawPixel) return;
     if (cursorGrid_.x < 0 || cursorGrid_.y < 0) return;
 
     int cx = (int)std::floor(cursorGrid_.x);
     int cy = (int)std::floor(cursorGrid_.y);
     int half = brushSize_ / 2;
 
-    auto cursorCol = (toolMode_ == ToolMode::Paint)
+    auto cursorCol = (toolMode_ == ToolMode::Paint || toolMode_ == ToolMode::DrawPixel)
                      ? paintColor_.toJuceColour().withAlpha(0.3f)
                      : Theme::Colors::Error.withAlpha(0.25f);
 
@@ -701,6 +890,43 @@ void GridCanvas::mouseDown(const juce::MouseEvent& e)
                 createStartGrid_ = gridPos;
                 createEndGrid_ = gridPos;
                 break;
+
+            // ---- DRAW POLYGON ----
+            case ToolMode::DrawPoly: {
+                auto snapped = juce::Point<float>(snapToGrid(gridPos.x), snapToGrid(gridPos.y));
+                // Double-click with 3+ vertices → finish
+                if (e.getNumberOfClicks() >= 2 && polyVertices_.size() >= 3) {
+                    finishPolygonCreation();
+                } else {
+                    polyVertices_.push_back(snapped);
+                    polyRubberBand_ = snapped;
+                    creatingPoly_ = true;
+                    repaint();
+                }
+                break;
+            }
+
+            // ---- DRAW PIXEL ----
+            case ToolMode::DrawPixel: {
+                creatingPixelShape_ = true;
+                pixelErasing_ = false;
+                currentStroke_.clear();
+                // Paint cell at cursor
+                int cx = (int)std::floor(gridPos.x), cy = (int)std::floor(gridPos.y);
+                int half = brushSize_ / 2;
+                for (int dy = -half; dy < brushSize_ - half; ++dy) {
+                    for (int dx = -half; dx < brushSize_ - half; ++dx) {
+                        int px = cx + dx, py = cy + dy;
+                        if (px >= 0 && px < Theme::GridW && py >= 0 && py < Theme::GridH) {
+                            std::pair<int,int> cell = {px, py};
+                            pixelCells_.insert(cell);
+                            currentStroke_.insert(cell);
+                        }
+                    }
+                }
+                repaint();
+                break;
+            }
         }
     }
     // Right-click erase in paint mode
@@ -708,6 +934,22 @@ void GridCanvas::mouseDown(const juce::MouseEvent& e)
         painting_ = true;
         strokeCells_.clear();
         eraseAtScreen(e.position);
+    }
+    // Right-click erase in DrawPixel mode
+    else if (e.mods.isRightButtonDown() && toolMode_ == ToolMode::DrawPixel) {
+        pixelErasing_ = true;
+        currentStroke_.clear();
+        int cx = (int)std::floor(gridPos.x), cy = (int)std::floor(gridPos.y);
+        int half = brushSize_ / 2;
+        for (int dy = -half; dy < brushSize_ - half; ++dy) {
+            for (int dx = -half; dx < brushSize_ - half; ++dx) {
+                int px = cx + dx, py = cy + dy;
+                std::pair<int,int> cell = {px, py};
+                pixelCells_.erase(cell);
+                currentStroke_.insert(cell);
+            }
+        }
+        repaint();
     }
 }
 
@@ -807,6 +1049,29 @@ void GridCanvas::mouseDrag(const juce::MouseEvent& e)
     if (creating_)
         createEndGrid_ = gridPos;
 
+    // Polygon rubber-band
+    if (creatingPoly_)
+        polyRubberBand_ = juce::Point<float>(snapToGrid(gridPos.x), snapToGrid(gridPos.y));
+
+    // Pixel painting during drag
+    if (toolMode_ == ToolMode::DrawPixel && (e.mods.isLeftButtonDown() || e.mods.isRightButtonDown())) {
+        int cx = (int)std::floor(gridPos.x), cy = (int)std::floor(gridPos.y);
+        int half = brushSize_ / 2;
+        for (int dy = -half; dy < brushSize_ - half; ++dy) {
+            for (int dx = -half; dx < brushSize_ - half; ++dx) {
+                int px = cx + dx, py = cy + dy;
+                if (px < 0 || px >= Theme::GridW || py < 0 || py >= Theme::GridH) continue;
+                std::pair<int,int> cell = {px, py};
+                if (pixelErasing_) {
+                    pixelCells_.erase(cell);
+                } else {
+                    pixelCells_.insert(cell);
+                }
+                currentStroke_.insert(cell);
+            }
+        }
+    }
+
     repaint();
 }
 
@@ -821,6 +1086,22 @@ void GridCanvas::mouseUp(const juce::MouseEvent&)
 
     if (creating_)
         finishCreation();
+
+    // Save pixel stroke to history
+    if (toolMode_ == ToolMode::DrawPixel && !currentStroke_.empty()) {
+        std::vector<std::pair<int,int>> strokeVec(currentStroke_.begin(), currentStroke_.end());
+        if (pixelErasing_) {
+            // For erase strokes, record a special erase entry
+            // We just rebuild from history, so record the full cell set as a checkpoint
+            pixelStrokeHistory_.clear();
+            std::vector<std::pair<int,int>> checkpoint(pixelCells_.begin(), pixelCells_.end());
+            pixelStrokeHistory_.push_back(std::move(checkpoint));
+        } else {
+            pixelStrokeHistory_.push_back(std::move(strokeVec));
+        }
+        currentStroke_.clear();
+        pixelErasing_ = false;
+    }
 }
 
 void GridCanvas::mouseMove(const juce::MouseEvent& e)
@@ -861,8 +1142,14 @@ void GridCanvas::mouseMove(const juce::MouseEvent& e)
         }
     }
 
-    if (toolMode_ == ToolMode::Paint || toolMode_ == ToolMode::Erase)
+    if (toolMode_ == ToolMode::Paint || toolMode_ == ToolMode::Erase
+        || toolMode_ == ToolMode::DrawPixel)
         repaint();
+
+    if (creatingPoly_) {
+        polyRubberBand_ = juce::Point<float>(snapToGrid(cursorGrid_.x), snapToGrid(cursorGrid_.y));
+        repaint();
+    }
 }
 
 void GridCanvas::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
@@ -880,6 +1167,24 @@ void GridCanvas::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWhee
 
 bool GridCanvas::keyPressed(const juce::KeyPress& key)
 {
+    // Enter → finish poly/pixel creation
+    if (key == juce::KeyPress::returnKey) {
+        if (creatingPoly_ && polyVertices_.size() >= 3) { finishPolygonCreation(); return true; }
+        if (creatingPixelShape_ && !pixelCells_.empty()) { finishPixelCreation(); return true; }
+    }
+    // Escape → cancel poly/pixel creation
+    if (key == juce::KeyPress::escapeKey) {
+        if (creatingPoly_)        { cancelPolygonCreation(); repaint(); return true; }
+        if (creatingPixelShape_)  { cancelPixelCreation(); repaint(); return true; }
+    }
+
+    // Ctrl+Z in pixel mode → undo stroke (session-local, before global undo)
+    if (key.getModifiers().isCommandDown() && key.getKeyCode() == 'Z'
+        && !key.getModifiers().isShiftDown() && creatingPixelShape_) {
+        undoPixelStroke();
+        return true;
+    }
+
     // Undo/Redo
     if (key.getModifiers().isCommandDown() && key.getKeyCode() == 'Z') {
         if (key.getModifiers().isShiftDown())
@@ -929,6 +1234,8 @@ bool GridCanvas::keyPressed(const juce::KeyPress& key)
     if (key.getTextCharacter() == 'r' || key.getTextCharacter() == 'R') { switchTool(ToolMode::DrawRect); return true; }
     if (key.getTextCharacter() == 'c' || key.getTextCharacter() == 'C') { switchTool(ToolMode::DrawCircle); return true; }
     if (key.getTextCharacter() == 'h' || key.getTextCharacter() == 'H') { switchTool(ToolMode::DrawHex); return true; }
+    if (key.getTextCharacter() == 'p' || key.getTextCharacter() == 'P') { switchTool(ToolMode::DrawPoly); return true; }
+    if (key.getTextCharacter() == 'g' || key.getTextCharacter() == 'G') { switchTool(ToolMode::DrawPixel); return true; }
 
     // Arrow keys: nudge all selected shapes
     if (!selMgr_.isEmpty()) {

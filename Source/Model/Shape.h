@@ -10,7 +10,7 @@
 
 namespace erae {
 
-enum class ShapeType { Rect, Circle, Hex, Polygon };
+enum class ShapeType { Rect, Circle, Hex, Polygon, Pixel };
 
 // 7-bit RGB color for Erae II (0-127 per channel)
 struct Color7 {
@@ -83,6 +83,7 @@ struct Shape {
             case ShapeType::Circle:  return "circle";
             case ShapeType::Hex:     return "hex";
             case ShapeType::Polygon: return "polygon";
+            case ShapeType::Pixel:   return "pixel";
         }
         return "rect";
     }
@@ -318,6 +319,64 @@ struct PolygonShape : Shape {
     }
 
     std::unique_ptr<Shape> clone() const override { return std::make_unique<PolygonShape>(*this); }
+};
+
+// ============================================================
+// PixelShape — freeform shape from painted grid cells
+// ============================================================
+struct PixelShape : Shape {
+    std::vector<std::pair<int,int>> relCells; // relative to (x,y) origin
+
+    PixelShape(std::string id_, float x_, float y_,
+               std::vector<std::pair<int,int>> cells)
+        : Shape(std::move(id_), ShapeType::Pixel, x_, y_), relCells(std::move(cells)) {}
+
+    BBox bbox() const override
+    {
+        if (relCells.empty()) return {x, y, x + 1, y + 1};
+        int minX = relCells[0].first, minY = relCells[0].second;
+        int maxX = minX, maxY = minY;
+        for (auto& [cx, cy] : relCells) {
+            minX = std::min(minX, cx); minY = std::min(minY, cy);
+            maxX = std::max(maxX, cx); maxY = std::max(maxY, cy);
+        }
+        return {x + minX, y + minY, x + maxX + 1.0f, y + maxY + 1.0f};
+    }
+
+    bool contains(float px, float py) const override
+    {
+        int cx = (int)std::floor(px - x);
+        int cy = (int)std::floor(py - y);
+        for (auto& [rx, ry] : relCells)
+            if (rx == cx && ry == cy) return true;
+        return false;
+    }
+
+    std::vector<std::pair<int,int>> gridPixels() const override
+    {
+        std::vector<std::pair<int,int>> px;
+        int ox = (int)x, oy = (int)y;
+        for (auto& [cx, cy] : relCells)
+            px.push_back({ox + cx, oy + cy});
+        return px;
+    }
+
+    juce::var toVar() const override
+    {
+        auto v = Shape::toVar();
+        if (auto* obj = v.getDynamicObject()) {
+            juce::Array<juce::var> cells;
+            for (auto& [cx, cy] : relCells) {
+                juce::Array<juce::var> pt;
+                pt.add(cx); pt.add(cy);
+                cells.add(juce::var(pt));
+            }
+            obj->setProperty("cells", cells);
+        }
+        return v;
+    }
+
+    std::unique_ptr<Shape> clone() const override { return std::make_unique<PixelShape>(*this); }
 };
 
 } // namespace erae

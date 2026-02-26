@@ -83,7 +83,7 @@ private:
     CVOutput cvOutput_;
     EraeRenderer renderer_;
 
-    bool perFingerColors_ = true;
+    bool perFingerColors_ = false;
 
     // Finger → shape capture (finger stays on shape from DOWN through UP)
     std::map<uint64_t, std::string> fingerShapeMap_;

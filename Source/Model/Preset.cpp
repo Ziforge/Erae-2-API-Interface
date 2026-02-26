@@ -214,7 +214,13 @@ std::vector<std::unique_ptr<Shape>> xyPad(int gridW, int gridH)
 }
 
 // ============================================================
-// buchla_thunder — complex multi-section layout
+// buchla_thunder — faithful recreation on 42x24 grid
+//
+// From the Sensel/Buchla Thunder overlay reference:
+//   y  0-2:   4 trigger buttons (top strip)
+//   y  2-12:  5+5 feathers (parallelogram strips) in V-chevron
+//   y 12-19:  2 bird's tail pieces (large V-shaped pads)
+//   y 19-24:  4 hexagonal palm pads
 // ============================================================
 std::vector<std::unique_ptr<Shape>> buchlaThunder(int gridW, int gridH)
 {
@@ -245,79 +251,91 @@ std::vector<std::unique_ptr<Shape>> buchlaThunder(int gridW, int gridH)
         return s;
     };
 
-    // =====================================================
-    // Buchla Thunder on 42x24 grid
-    //   Row 0-1:   7 trigger pads (unique colors)
-    //   Row 2-8:   6 wide parallelograms (3L+3R) in V-chevron
-    //   Row 10-18: 4 wider parallelograms (2L+2R) in V-chevron
-    //   Row 19-23: 4 hexagonal pads
-    // =====================================================
-
-    // --- Top triggers: 7 pads, 2 rows tall, unique colors ---
+    // --- 4 trigger buttons across the top (y=0 to y=2) ---
     {
-        int trigW = 5, trigGap = 1;
-        int trigTotal = 7 * trigW + 6 * trigGap;  // 41
-        int trigPad = (gridW - trigTotal) / 2;
-        float trigHues[] = {0, 30, 60, 120, 180, 240, 300};
-        for (int i = 0; i < 7; ++i) {
-            float x = (float)(trigPad + i * (trigW + trigGap));
+        // 4 buttons × 9 wide + 3 gaps × 2 = 42
+        int trigW = 9;
+        int xPositions[] = {0, 11, 22, 33};
+        int trigNotes[] = {60, 61, 62, 63};
+        for (int i = 0; i < 4; ++i) {
+            float x = (float)xPositions[i];
             auto s = makePoly(
                 "trig_" + std::to_string(i),
                 {{x, 0}, {x + trigW, 0}, {x + trigW, 2}, {x, 2}},
-                hsvToRgb7(trigHues[i], 0.7f, 0.45f),
-                hsvToRgb7(trigHues[i], 0.7f, 1.0f),
-                "trigger", noteParams(60 + i));
+                teal((float)(i * 8), 0.6f, 0.4f),
+                teal((float)(i * 8), 0.6f, 1.0f),
+                "trigger", noteParams(trigNotes[i]));
             s->visualStyle = "pressure_glow";
             shapes.push_back(std::move(s));
         }
     }
 
-    // --- Row 1 wings: 3 left + 3 right, V-chevron (y=2-9) ---
+    // --- 5+5 feathers: V-chevron (y=2 to y=12, 10 rows) ---
+    // Lean = 2 cells over 10 rows (~11°). Inner feathers at center,
+    // outer feathers at edges. Packed tight (no gaps between feathers).
+    // The V opens 4 cells at the bottom (x=19 to x=23).
     {
-        float r1t = 2, r1b = 9;
-        // Outer shapes: width 6, lean 3. Inner shapes: width 4, lean 3.
-        // Inner shapes meet at center (x=21) at top, V opens at bottom.
-        struct WingDef { std::string id; float tL, tR, bL, bR; int note; float hue; };
-        WingDef row1[] = {
-            {"wing_L0",  3, 9,   0, 6,  48, 0},     // outer left
-            {"wing_L1", 10, 16,  7, 13, 49, 10},    // middle left
-            {"wing_L2", 17, 21, 14, 18, 50, 20},    // inner left
-            {"wing_R2", 21, 25, 24, 28, 55, 20},    // inner right
-            {"wing_R1", 26, 32, 29, 35, 56, 10},    // middle right
-            {"wing_R0", 33, 39, 36, 42, 57, 0},     // outer right
+        float fTop = 2, fBot = 12;
+
+        // Left feathers (inner→outer): top leans right of bottom
+        struct FeatherDef { std::string id; float tL, tR, bL, bR; int note; float hue; };
+        FeatherDef leftF[] = {
+            {"feath_L1", 17, 21, 15, 19, 48, 20},   // inner  (W=4)
+            {"feath_L2", 13, 17, 11, 15, 49, 15},   //        (W=4)
+            {"feath_L3",  9, 13,  7, 11, 50, 10},   //        (W=4)
+            {"feath_L4",  5,  9,  3,  7, 51,  5},   //        (W=4)
+            {"feath_L5",  2,  5,  0,  3, 52,  0},   // outer  (W=3)
         };
-        for (auto& w : row1) {
-            auto s = makePoly(w.id,
-                {{w.tL, r1t}, {w.tR, r1t}, {w.bR, r1b}, {w.bL, r1b}},
-                teal(w.hue, 0.8f, 0.5f), teal(w.hue, 0.8f, 1.0f),
-                "note_pad", noteParams(w.note));
+        for (auto& f : leftF) {
+            auto s = makePoly(f.id,
+                {{f.tL, fTop}, {f.tR, fTop}, {f.bR, fBot}, {f.bL, fBot}},
+                teal(f.hue, 0.8f, 0.5f), teal(f.hue, 0.8f, 1.0f),
+                "note_pad", noteParams(f.note));
+            s->visualStyle = "pressure_glow";
+            shapes.push_back(std::move(s));
+        }
+
+        // Right feathers (mirror): top leans left of bottom
+        FeatherDef rightF[] = {
+            {"feath_R1", 21, 25, 23, 27, 55, 20},   // inner  (W=4)
+            {"feath_R2", 25, 29, 27, 31, 56, 15},   //        (W=4)
+            {"feath_R3", 29, 33, 31, 35, 57, 10},   //        (W=4)
+            {"feath_R4", 33, 37, 35, 39, 58,  5},   //        (W=4)
+            {"feath_R5", 37, 40, 39, 42, 59,  0},   // outer  (W=3)
+        };
+        for (auto& f : rightF) {
+            auto s = makePoly(f.id,
+                {{f.tL, fTop}, {f.tR, fTop}, {f.bR, fBot}, {f.bL, fBot}},
+                teal(f.hue, 0.8f, 0.5f), teal(f.hue, 0.8f, 1.0f),
+                "note_pad", noteParams(f.note));
             s->visualStyle = "pressure_glow";
             shapes.push_back(std::move(s));
         }
     }
 
-    // --- Row 2 wings: 2 left + 2 right, wider V-chevron (y=10-19) ---
+    // --- Bird's tail: 2 large V-shaped pads (y=12 to y=19, 7 rows) ---
+    // These continue the V downward — large parallelograms that meet
+    // at the center top and spread apart. Lean = 7 cells over 7 rows.
     {
-        float r2t = 10, r2b = 19;
-        // Width 8, lean 5. Inner shapes meet at center (x=21) at top.
-        struct WingDef { std::string id; float tL, tR, bL, bR; int note; float hue; };
-        WingDef row2[] = {
-            {"wing2_L0",  5, 13,  0, 8,  36, -5},   // outer left
-            {"wing2_L1", 14, 21,  9, 16, 38, 5},    // inner left
-            {"wing2_R1", 21, 28, 26, 33, 43, 5},    // inner right
-            {"wing2_R0", 29, 37, 34, 42, 45, -5},   // outer right
-        };
-        for (auto& w : row2) {
-            auto s = makePoly(w.id,
-                {{w.tL, r2t}, {w.tR, r2t}, {w.bR, r2b}, {w.bL, r2b}},
-                teal(w.hue, 0.75f, 0.45f), teal(w.hue, 0.75f, 1.0f),
-                "note_pad", noteParams(w.note));
-            s->visualStyle = "pressure_glow";
-            shapes.push_back(std::move(s));
-        }
+        float tTop = 12, tBot = 19;
+        // Left tail: top(12,21) → bot(5,14), W=9, lean=7
+        auto tailL = makePoly("tail_L",
+            {{12, tTop}, {21, tTop}, {14, tBot}, {5, tBot}},
+            teal(-5, 0.75f, 0.45f), teal(-5, 0.75f, 1.0f),
+            "note_pad", noteParams(36));
+        tailL->visualStyle = "pressure_glow";
+        shapes.push_back(std::move(tailL));
+
+        // Right tail: top(21,30) → bot(28,37), W=9, lean=7
+        auto tailR = makePoly("tail_R",
+            {{21, tTop}, {30, tTop}, {37, tBot}, {28, tBot}},
+            teal(5, 0.75f, 0.45f), teal(5, 0.75f, 1.0f),
+            "note_pad", noteParams(43));
+        tailR->visualStyle = "pressure_glow";
+        shapes.push_back(std::move(tailR));
     }
 
-    // --- Bottom: 4 hexagonal pads (y~19-24, radius 2.5) ---
+    // --- 4 hexagonal palm pads (center y=21.5, radius 2.5) ---
     {
         float hexY = 21.5f;
         float hexR = 2.5f;
@@ -334,16 +352,18 @@ std::vector<std::unique_ptr<Shape>> buchlaThunder(int gridW, int gridH)
             return h;
         };
 
-        shapes.push_back(makeHex("hex_L", 4.0f,
+        // Outer pads: XY controllers for expressive palm control
+        shapes.push_back(makeHex("hex_L", 5.0f,
             teal(-15, 0.85f, 0.55f), teal(-15, 0.85f, 1.0f),
             "xy_controller", xyParams(74, 71)));
-        shapes.push_back(makeHex("hex_R", 38.0f,
+        shapes.push_back(makeHex("hex_R", 37.0f,
             teal(25, 0.85f, 0.55f), teal(25, 0.85f, 1.0f),
             "xy_controller", xyParams(1, 2)));
-        shapes.push_back(makeHex("hex_CL", 16.0f,
+        // Inner pads: note pads for bass notes
+        shapes.push_back(makeHex("hex_CL", 17.0f,
             teal(5, 0.8f, 0.5f), teal(5, 0.8f, 1.0f),
             "note_pad", noteParams(24)));
-        shapes.push_back(makeHex("hex_CR", 26.0f,
+        shapes.push_back(makeHex("hex_CR", 25.0f,
             teal(10, 0.8f, 0.5f), teal(10, 0.8f, 1.0f),
             "note_pad", noteParams(28)));
     }
@@ -437,6 +457,16 @@ std::vector<std::unique_ptr<Shape>> fromJSON(const juce::String& json)
                 }
             }
             shape = std::make_unique<PolygonShape>(id, x, y, std::move(verts));
+        }
+        else if (type == "pixel") {
+            std::vector<std::pair<int,int>> cells;
+            if (auto* carr = item.getProperty("cells", {}).getArray()) {
+                for (auto& pt : *carr) {
+                    if (auto* ptArr = pt.getArray(); ptArr && ptArr->size() >= 2)
+                        cells.push_back({(int)(*ptArr)[0], (int)(*ptArr)[1]});
+                }
+            }
+            shape = std::make_unique<PixelShape>(id, x, y, std::move(cells));
         }
         else {
             continue;

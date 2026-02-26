@@ -9,6 +9,7 @@
 #include "UI/EraeLookAndFeel.h"
 #include "UI/PropertyPanel.h"
 #include "UI/Theme.h"
+#include "Core/ShapeLibrary.h"
 
 namespace erae {
 
@@ -54,6 +55,9 @@ private:
     juce::TextButton drawRectButton_  {"Rect"};
     juce::TextButton drawCircButton_  {"Circle"};
     juce::TextButton drawHexButton_   {"Hex"};
+    juce::TextButton drawPolyButton_  {"Poly"};
+    juce::TextButton drawPixelButton_ {"Pixel"};
+    juce::TextButton pixelDoneButton_ {"Done"};
 
     // Toolbar — actions
     juce::ComboBox presetSelector_;
@@ -64,6 +68,7 @@ private:
     juce::TextButton zoomFitButton_ {"Fit"};
     juce::TextButton deleteButton_  {"Del"};
     juce::TextButton dupeButton_    {"Dupe"};
+    juce::TextButton newButton_     {"New"};
     juce::TextButton saveButton_    {"Save"};
     juce::TextButton loadButton_    {"Load"};
 
@@ -116,6 +121,35 @@ private:
 
     // Status bar
     juce::Label statusLabel_;
+
+    // Shape Library
+    ShapeLibrary library_;
+    juce::ListBox libraryList_;
+    juce::TextButton libSaveBtn_   {"Save"};
+    juce::TextButton libPlaceBtn_  {"Place"};
+    juce::TextButton libFlipHBtn_  {"Flip H"};
+    juce::TextButton libFlipVBtn_  {"Flip V"};
+    juce::TextButton libDeleteBtn_ {"Del"};
+    juce::Label libLabel_          {"", "SHAPE LIBRARY"};
+
+    // Library list model
+    struct LibraryListModel : public juce::ListBoxModel {
+        ShapeLibrary* library = nullptr;
+        int getNumRows() override { return library ? library->numEntries() : 0; }
+        void paintListBoxItem(int row, juce::Graphics& g, int w, int h, bool selected) override
+        {
+            if (!library || row < 0 || row >= library->numEntries()) return;
+            if (selected) {
+                g.setColour(Theme::Colors::Accent.withAlpha(0.3f));
+                g.fillRect(0, 0, w, h);
+            }
+            g.setColour(Theme::Colors::Text);
+            g.setFont(juce::Font(Theme::FontBase));
+            g.drawText(library->getEntry(row).name, 4, 0, w - 8, h,
+                       juce::Justification::centredLeft, true);
+        }
+    };
+    LibraryListModel libraryListModel_;
 
     void loadPreset(int index);
     void savePresetToFile();

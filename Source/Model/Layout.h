@@ -58,9 +58,10 @@ public:
     int nextAvailableNote(int startFrom = 60) const;
     int nextAvailableCC(int startFrom = 1) const;
 
+    void notifyListeners();
+
 private:
     void sortByZOrder();
-    void notifyListeners();
 
     std::vector<std::unique_ptr<Shape>> shapes_;
     std::vector<Listener*> listeners_;
