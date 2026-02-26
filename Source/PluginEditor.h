@@ -7,16 +7,21 @@
 #include "UI/GridCanvas.h"
 #include "UI/ColorPicker7Bit.h"
 #include "UI/EraeLookAndFeel.h"
-#include "UI/PropertyPanel.h"
+#include "UI/SidebarTabBar.h"
+#include "UI/MidiPanel.h"
+#include "UI/OutputPanel.h"
 #include "UI/Theme.h"
 #include "Core/ShapeLibrary.h"
 #include "Core/ShapeMorph.h"
+#include "Model/VisualStyle.h"
 
 namespace erae {
 
 class EraeEditor : public juce::AudioProcessorEditor,
                    public ColorPicker7Bit::Listener,
-                   public PropertyPanel::Listener,
+                   public MidiPanel::Listener,
+                   public OutputPanel::Listener,
+                   public SidebarTabBar::Listener,
                    public GridCanvas::Listener,
                    public SelectionManager::Listener,
                    public juce::Timer {
@@ -30,10 +35,17 @@ public:
     // ColorPicker7Bit::Listener
     void colorChanged(Color7 newColor) override;
 
-    // PropertyPanel::Listener
+    // MidiPanel::Listener
     void behaviorChanged(const std::string& shapeId) override;
     void midiLearnRequested(const std::string& shapeId) override;
     void midiLearnCancelled() override;
+
+    // OutputPanel::Listener
+    void cvParamsChanged(const std::string& shapeId) override;
+    void oscSettingsChanged(bool enabled, const std::string& host, int port) override;
+
+    // SidebarTabBar::Listener
+    void tabChanged(SidebarTabBar::Tab newTab) override;
 
     // GridCanvas::Listener
     void selectionChanged() override;
@@ -90,17 +102,9 @@ private:
     juce::ToggleButton fingerColorsToggle_ {"Colors"};
     juce::ToggleButton dawFeedbackToggle_  {"DAW FB"};
 
-    // OSC settings (sidebar)
-    juce::Label oscLabel_          {"", "OSC OUTPUT"};
-    juce::ToggleButton oscToggle_  {"Enable"};
-    juce::Label oscHostLabel_      {"", "Host"};
-    juce::TextEditor oscHostEditor_;
-    juce::Label oscPortLabel_      {"", "Port"};
-    juce::Slider oscPortSlider_;
-
     // Clipboard
     Clipboard clipboard_;
-    int shapeCounterRef_ = 0; // shared counter for clipboard paste
+    int shapeCounterRef_ = 0;
 
     // MIDI learn target shape
     std::string midiLearnShapeId_;
@@ -108,13 +112,18 @@ private:
     // File chooser (must persist during async dialog)
     std::unique_ptr<juce::FileChooser> fileChooser_;
 
-    // Sidebar
+    // Sidebar — Tab bar
+    SidebarTabBar tabBar_;
+
+    // Sidebar — Shape tab
     ColorPicker7Bit colorPicker_;
     juce::Label colorLabel_;
-    PropertyPanel propertyPanel_;
-    juce::Label selectionLabel_;
+    juce::Label visualLabel_    {"", "VISUAL"};
+    juce::ComboBox visualBox_;
+    juce::Label fillHorizLabel_ {"", "Fill Horiz"};
+    juce::ToggleButton fillHorizToggle_;
 
-    // Alignment buttons (shown when 2+ selected)
+    // Sidebar — Shape tab: alignment (2+ selected)
     juce::TextButton alignLeftBtn_    {"L"};
     juce::TextButton alignRightBtn_   {"R"};
     juce::TextButton alignTopBtn_     {"T"};
@@ -125,16 +134,19 @@ private:
     juce::TextButton distVBtn_        {"DV"};
     juce::Label alignLabel_           {"", "ALIGN"};
 
-    // Morph controls (shown when 2 shapes selected)
+    // Sidebar — Shape tab: morph (2 selected)
     juce::Label morphLabel_          {"", "MORPH"};
     juce::TextButton morphButton_    {"Create Morph"};
     juce::Slider morphSlider_;
-    std::string morphIdA_, morphIdB_;  // source shapes for morphing
+    std::string morphIdA_, morphIdB_;
 
-    // Status bar
-    juce::Label statusLabel_;
+    // Sidebar — MIDI tab
+    MidiPanel midiPanel_;
 
-    // Shape Library
+    // Sidebar — Output tab
+    OutputPanel outputPanel_;
+
+    // Sidebar — Library tab
     ShapeLibrary library_;
     juce::ListBox libraryList_;
     juce::TextButton libSaveBtn_   {"Save"};
@@ -143,6 +155,12 @@ private:
     juce::TextButton libFlipVBtn_  {"Flip V"};
     juce::TextButton libDeleteBtn_ {"Del"};
     juce::Label libLabel_          {"", "SHAPE LIBRARY"};
+
+    // Sidebar — selection info (always visible at bottom)
+    juce::Label selectionLabel_;
+
+    // Status bar
+    juce::Label statusLabel_;
 
     // Library list model
     struct LibraryListModel : public juce::ListBoxModel {
@@ -175,6 +193,8 @@ private:
     void drawToolbarSeparators(juce::Graphics& g);
     void showAlignmentButtons(bool show);
     void performAlignment(std::function<std::vector<AlignResult>(Layout&, const std::set<std::string>&)> fn, const std::string& name);
+    void showTabContent(SidebarTabBar::Tab tab);
+    void updateVisualControls();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EraeEditor)
 };

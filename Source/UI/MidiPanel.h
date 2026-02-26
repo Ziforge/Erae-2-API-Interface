@@ -3,16 +3,15 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../Model/Shape.h"
 #include "../Model/Behavior.h"
-#include "../Model/VisualStyle.h"
 #include "../Model/Layout.h"
 #include "Theme.h"
 
 namespace erae {
 
-class PropertyPanel : public juce::Component,
-                      private juce::ComboBox::Listener,
-                      private juce::Slider::Listener,
-                      private juce::Button::Listener {
+class MidiPanel : public juce::Component,
+                  private juce::ComboBox::Listener,
+                  private juce::Slider::Listener,
+                  private juce::Button::Listener {
 public:
     class Listener {
     public:
@@ -22,7 +21,7 @@ public:
         virtual void midiLearnCancelled() {}
     };
 
-    PropertyPanel(Layout& layout);
+    MidiPanel(Layout& layout);
 
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -76,7 +75,7 @@ private:
 
     juce::Label mpeHint_        {"", "(MPE: pitch-X, slide-Y, pressure-Z)"};
 
-    // Phase 2: Musical features
+    // Musical features
     juce::Label velCurveLabel_     {"", "Vel Curve"};
     juce::ComboBox velocityCurveBox_;
     juce::Label pressCurveLabel_   {"", "Press Curve"};
@@ -92,7 +91,7 @@ private:
     juce::Label glideLabel_        {"", "Glide"};
     juce::Slider glideSlider_;
 
-    // Phase 4: CC ranges
+    // CC ranges
     juce::Label ccMinLabel_    {"", "CC Min"};
     juce::Slider ccMinSlider_;
     juce::Label ccMaxLabel_    {"", "CC Max"};
@@ -106,22 +105,9 @@ private:
     juce::Label ccYMaxLabel_   {"", "Y Max"};
     juce::Slider ccYMaxSlider_;
 
-    // CV output
-    juce::Label cvLabel_        {"", "CV OUTPUT"};
-    juce::Label cvEnableLabel_  {"", "CV Enabled"};
-    juce::ToggleButton cvEnableToggle_;
-    juce::Label cvChannelLabel_ {"", "CV Channel"};
-    juce::Slider cvChannelSlider_;
-
-    // Visual style controls
-    juce::Label visualLabel_    {"", "VISUAL"};
-    juce::ComboBox visualBox_;
-    juce::Label fillHorizLabel_ {"", "Fill Horiz"};
-    juce::ToggleButton fillHorizToggle_;
-
     std::vector<Listener*> listeners_;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PropertyPanel)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MidiPanel)
 };
 
 } // namespace erae

@@ -65,8 +65,12 @@ target_sources(EraeShapeEditor
         Source/UI/EraeLookAndFeel.cpp
         Source/UI/ColorPicker7Bit.h
         Source/UI/ColorPicker7Bit.cpp
-        Source/UI/PropertyPanel.h
-        Source/UI/PropertyPanel.cpp
+        Source/UI/SidebarTabBar.h
+        Source/UI/SidebarTabBar.cpp
+        Source/UI/MidiPanel.h
+        Source/UI/MidiPanel.cpp
+        Source/UI/OutputPanel.h
+        Source/UI/OutputPanel.cpp
         # Erae hardware
         Source/Erae/EraeSysEx.h
         Source/Erae/FingerStream.h

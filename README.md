@@ -22,6 +22,7 @@ A JUCE-based visual layout editor and MIDI controller for the **Erae Touch II** 
 - **Preset Library** - Built-in presets (Drum Pads, Piano, Wicki-Hayden, Fader Bank, XY Pad, Buchla Thunder) plus save/load of custom layouts as JSON
 - **Shape Library** - Save any shape to a persistent reusable library. Browse saved shapes, place them on the canvas, flip horizontally/vertically. Library persists across sessions as JSON
 - **CV Output** - Each shape can optionally output CV signals on audio channels (1V/oct pitch, gate, pressure, slide). Designed for bridging to modular synths via DC-coupled audio interfaces or FPGA USB audio (120-channel Zybo modular)
+- **Tabbed Sidebar** - Right sidebar organized into 4 tabs: **Shape** (color picker, visual style, alignment, morph), **MIDI** (behavior, note/CC, learn, curves, scales), **Output** (CV per-shape, OSC global), **Library** (browse, save, place, flip). Selection info stays visible at the bottom across all tabs
 - **Runs as Standalone or VST3** - Use it as a standalone app or load it in your DAW
 
 ## Shape Types
@@ -119,7 +120,7 @@ When enabled, all MIDI output is mirrored as OSC messages over UDP (configurable
 
 ## CV Output
 
-Any shape can optionally output CV (control voltage) signals on the plugin's audio output channels. Enable CV per-shape in the property panel, then set the base CV channel number. The plugin outputs audio-rate constant values suitable for DC-coupled audio interfaces or USB audio bridges to modular synths.
+Any shape can optionally output CV (control voltage) signals on the plugin's audio output channels. Enable CV per-shape in the **Output** tab, then set the base CV channel number. The plugin outputs audio-rate constant values suitable for DC-coupled audio interfaces or USB audio bridges to modular synths.
 
 Audio channel layout: channels 0-1 are silence (stereo main), channels 2+ carry CV signals. Resize the plugin's output bus in your DAW to access CV channels (up to 34 total = 2 main + 32 CV).
 

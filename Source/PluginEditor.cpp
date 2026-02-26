@@ -10,7 +10,7 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     : AudioProcessorEditor(p),
       processor_(p),
       canvas_(p.getLayout(), p.getUndoManager(), selectionManager_),
-      propertyPanel_(p.getLayout())
+      midiPanel_(p.getLayout())
 {
     setLookAndFeel(&lookAndFeel_);
 
@@ -225,54 +225,15 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     dawFeedbackToggle_.setTooltip("DAW MIDI feedback highlights");
     addAndMakeVisible(dawFeedbackToggle_);
 
-    // --- Sidebar: OSC output settings ---
-    oscLabel_.setFont(juce::Font(Theme::FontSection, juce::Font::bold));
-    oscLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
-    addAndMakeVisible(oscLabel_);
-
-    oscToggle_.setToggleState(processor_.getOscOutput().isEnabled(), juce::dontSendNotification);
-    oscToggle_.onClick = [this] {
-        auto& osc = processor_.getOscOutput();
-        if (oscToggle_.getToggleState())
-            osc.enable(oscHostEditor_.getText().toStdString(), (int)oscPortSlider_.getValue());
-        else
-            osc.disable();
-    };
-    addAndMakeVisible(oscToggle_);
-
-    oscHostLabel_.setFont(juce::Font(Theme::FontBase));
-    oscHostLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
-    addAndMakeVisible(oscHostLabel_);
-
-    oscHostEditor_.setText(processor_.getOscOutput().getHost());
-    oscHostEditor_.setFont(juce::Font(Theme::FontBase));
-    oscHostEditor_.onReturnKey = [this] {
-        if (oscToggle_.getToggleState())
-            processor_.getOscOutput().enable(oscHostEditor_.getText().toStdString(), (int)oscPortSlider_.getValue());
-    };
-    addAndMakeVisible(oscHostEditor_);
-
-    oscPortLabel_.setFont(juce::Font(Theme::FontBase));
-    oscPortLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
-    addAndMakeVisible(oscPortLabel_);
-
-    oscPortSlider_.setRange(1024, 65535, 1);
-    oscPortSlider_.setValue(processor_.getOscOutput().getPort(), juce::dontSendNotification);
-    oscPortSlider_.setSliderStyle(juce::Slider::LinearBar);
-    oscPortSlider_.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 50, 20);
-    oscPortSlider_.setColour(juce::Slider::trackColourId, Theme::Colors::Accent);
-    oscPortSlider_.setColour(juce::Slider::textBoxTextColourId, Theme::Colors::Text);
-    oscPortSlider_.onValueChange = [this] {
-        if (oscToggle_.getToggleState())
-            processor_.getOscOutput().enable(oscHostEditor_.getText().toStdString(), (int)oscPortSlider_.getValue());
-    };
-    addAndMakeVisible(oscPortSlider_);
-
     // --- Canvas ---
     canvas_.addListener(this);
     addAndMakeVisible(canvas_);
 
-    // --- Sidebar: section header ---
+    // --- Sidebar: Tab bar ---
+    tabBar_.addListener(this);
+    addAndMakeVisible(tabBar_);
+
+    // --- Sidebar: Shape tab — color picker ---
     colorLabel_.setText("COLOR", juce::dontSendNotification);
     colorLabel_.setFont(juce::Font(Theme::FontSection, juce::Font::bold));
     colorLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
@@ -282,17 +243,59 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     colorPicker_.setColor(Color7{0, 80, 127});
     addAndMakeVisible(colorPicker_);
 
-    // --- Sidebar: property panel ---
-    propertyPanel_.addListener(this);
-    propertyPanel_.setVisible(false);
-    addAndMakeVisible(propertyPanel_);
+    // --- Sidebar: Shape tab — visual style controls ---
+    visualLabel_.setFont(juce::Font(Theme::FontSection, juce::Font::bold));
+    visualLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
+    addAndMakeVisible(visualLabel_);
 
-    // Selection info
-    selectionLabel_.setFont(juce::Font(Theme::FontSmall));
-    selectionLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
-    addAndMakeVisible(selectionLabel_);
+    visualBox_.addItem("Static",        1);
+    visualBox_.addItem("Fill Bar",      2);
+    visualBox_.addItem("Position Dot",  3);
+    visualBox_.addItem("Radial Arc",    4);
+    visualBox_.addItem("Pressure Glow", 5);
+    visualBox_.onChange = [this] {
+        auto singleId = selectionManager_.getSingleSelectedId();
+        if (singleId.empty()) return;
+        auto* s = processor_.getLayout().getShape(singleId);
+        if (!s) return;
+        int id = visualBox_.getSelectedId();
+        VisualStyle vstyle;
+        switch (id) {
+            case 1: vstyle = VisualStyle::Static; break;
+            case 2: vstyle = VisualStyle::FillBar; break;
+            case 3: vstyle = VisualStyle::PositionDot; break;
+            case 4: vstyle = VisualStyle::RadialArc; break;
+            case 5: vstyle = VisualStyle::PressureGlow; break;
+            default: return;
+        }
+        s->visualStyle = visualStyleToString(vstyle);
+        updateVisualControls();
+        // Write visual params
+        auto* vobj = new juce::DynamicObject();
+        if (vstyle == VisualStyle::FillBar)
+            vobj->setProperty("fill_horizontal", fillHorizToggle_.getToggleState());
+        s->visualParams = juce::var(vobj);
+        processor_.getLayout().setBehavior(singleId, s->behavior, s->behaviorParams);
+    };
+    addAndMakeVisible(visualBox_);
 
-    // --- Sidebar: alignment buttons ---
+    fillHorizLabel_.setFont(juce::Font(Theme::FontBase));
+    fillHorizLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
+    addAndMakeVisible(fillHorizLabel_);
+
+    fillHorizToggle_.onClick = [this] {
+        auto singleId = selectionManager_.getSingleSelectedId();
+        if (singleId.empty()) return;
+        auto* s = processor_.getLayout().getShape(singleId);
+        if (!s) return;
+        auto* vobj = new juce::DynamicObject();
+        vobj->setProperty("fill_horizontal", fillHorizToggle_.getToggleState());
+        s->visualParams = juce::var(vobj);
+        processor_.getLayout().setBehavior(singleId, s->behavior, s->behaviorParams);
+    };
+    addAndMakeVisible(fillHorizToggle_);
+
+    // --- Sidebar: Shape tab — alignment buttons ---
     alignLabel_.setFont(juce::Font(Theme::FontSection, juce::Font::bold));
     alignLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
     addAndMakeVisible(alignLabel_);
@@ -321,7 +324,7 @@ EraeEditor::EraeEditor(EraeProcessor& p)
 
     showAlignmentButtons(false);
 
-    // --- Sidebar: Morph controls ---
+    // --- Sidebar: Shape tab — morph controls ---
     morphLabel_.setFont(juce::Font(Theme::FontSection, juce::Font::bold));
     morphLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
     addAndMakeVisible(morphLabel_);
@@ -362,7 +365,18 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     morphSlider_.setVisible(false);
     morphButton_.setVisible(false);
 
-    // --- Sidebar: Shape Library ---
+    // --- Sidebar: MIDI tab ---
+    midiPanel_.addListener(this);
+    addAndMakeVisible(midiPanel_);
+
+    // --- Sidebar: Output tab ---
+    outputPanel_.addListener(this);
+    outputPanel_.setOscState(processor_.getOscOutput().isEnabled(),
+                             processor_.getOscOutput().getHost(),
+                             processor_.getOscOutput().getPort());
+    addAndMakeVisible(outputPanel_);
+
+    // --- Sidebar: Library tab ---
     libLabel_.setFont(juce::Font(Theme::FontSection, juce::Font::bold));
     libLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
     addAndMakeVisible(libLabel_);
@@ -437,13 +451,19 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     library_.load(ShapeLibrary::getDefaultLibraryFile());
     libraryList_.updateContent();
 
+    // --- Sidebar: Selection info (always visible) ---
+    selectionLabel_.setFont(juce::Font(Theme::FontSmall));
+    selectionLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
+    addAndMakeVisible(selectionLabel_);
+
     // --- Status bar ---
     statusLabel_.setFont(juce::Font(Theme::FontStatus));
     statusLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
     addAndMakeVisible(statusLabel_);
 
-    // Default to select mode
+    // Default to select mode + Shape tab
     setTool(ToolMode::Select);
+    showTabContent(SidebarTabBar::Shape);
     updateStatus();
     updateUndoButtons();
 
@@ -460,7 +480,9 @@ EraeEditor::~EraeEditor()
     stopTimer();
     canvas_.removeListener(this);
     colorPicker_.removeListener(this);
-    propertyPanel_.removeListener(this);
+    midiPanel_.removeListener(this);
+    outputPanel_.removeListener(this);
+    tabBar_.removeListener(this);
     selectionManager_.removeListener(this);
     setLookAndFeel(nullptr);
 }
@@ -609,63 +631,111 @@ void EraeEditor::resized()
     auto sidebar = area.removeFromRight(Theme::SidebarWidth);
     sidebar.reduce(Theme::SpaceLG, Theme::SpaceLG);
 
-    colorLabel_.setBounds(sidebar.removeFromTop(18));
-    sidebar.removeFromTop(Theme::SpaceMD);
+    // Tab bar at top of sidebar
+    tabBar_.setBounds(sidebar.removeFromTop(Theme::TabBarHeight));
+    sidebar.removeFromTop(Theme::SpaceSM);
 
-    // Reserve space for selection info at the bottom
+    // Selection info at bottom of sidebar
     auto selArea = sidebar.removeFromBottom(36);
     selectionLabel_.setBounds(selArea);
 
-    // Color picker gets up to 280px, leaving room for property panel
-    int pickerH = std::min(sidebar.getHeight() / 2, 280);
-    colorPicker_.setBounds(sidebar.removeFromTop(pickerH));
-    sidebar.removeFromTop(Theme::SpaceLG);
+    // Tab content area
+    auto tabContent = sidebar;
 
-    // Alignment section (shows when 2+ selected)
-    alignLabel_.setBounds(sidebar.removeFromTop(18));
-    sidebar.removeFromTop(3);
-    {
-        auto alignRow1 = sidebar.removeFromTop(24);
-        int abw = (alignRow1.getWidth() - 3 * Theme::SpaceXS) / 4;
-        alignLeftBtn_.setBounds(alignRow1.removeFromLeft(abw));
-        alignRow1.removeFromLeft(Theme::SpaceXS);
-        alignRightBtn_.setBounds(alignRow1.removeFromLeft(abw));
-        alignRow1.removeFromLeft(Theme::SpaceXS);
-        alignTopBtn_.setBounds(alignRow1.removeFromLeft(abw));
-        alignRow1.removeFromLeft(Theme::SpaceXS);
-        alignBottomBtn_.setBounds(alignRow1);
+    // Layout active tab content
+    auto activeTab = tabBar_.getActiveTab();
+
+    // ===== Shape Tab =====
+    if (activeTab == SidebarTabBar::Shape) {
+        auto content = tabContent;
+
+        colorLabel_.setBounds(content.removeFromTop(18));
+        content.removeFromTop(Theme::SpaceMD);
+
+        int pickerH = std::min(content.getHeight() / 2, 280);
+        colorPicker_.setBounds(content.removeFromTop(pickerH));
+        content.removeFromTop(Theme::SpaceLG);
+
+        // Visual style section (only when single shape selected)
+        if (visualLabel_.isVisible()) {
+            visualLabel_.setBounds(content.removeFromTop(18));
+            content.removeFromTop(3);
+            visualBox_.setBounds(content.removeFromTop(26));
+            content.removeFromTop(5);
+            if (fillHorizToggle_.isVisible()) {
+                auto row = content.removeFromTop(26);
+                fillHorizLabel_.setBounds(row.removeFromLeft(74));
+                fillHorizToggle_.setBounds(row.removeFromLeft(26));
+                content.removeFromTop(3);
+            }
+            content.removeFromTop(Theme::SpaceSM);
+        }
+
+        // Alignment section (when 2+ selected)
+        if (alignLabel_.isVisible()) {
+            alignLabel_.setBounds(content.removeFromTop(18));
+            content.removeFromTop(3);
+            {
+                auto alignRow1 = content.removeFromTop(24);
+                int abw = (alignRow1.getWidth() - 3 * Theme::SpaceXS) / 4;
+                alignLeftBtn_.setBounds(alignRow1.removeFromLeft(abw));
+                alignRow1.removeFromLeft(Theme::SpaceXS);
+                alignRightBtn_.setBounds(alignRow1.removeFromLeft(abw));
+                alignRow1.removeFromLeft(Theme::SpaceXS);
+                alignTopBtn_.setBounds(alignRow1.removeFromLeft(abw));
+                alignRow1.removeFromLeft(Theme::SpaceXS);
+                alignBottomBtn_.setBounds(alignRow1);
+            }
+            content.removeFromTop(3);
+            {
+                auto alignRow2 = content.removeFromTop(24);
+                int abw = (alignRow2.getWidth() - 3 * Theme::SpaceXS) / 4;
+                alignCHBtn_.setBounds(alignRow2.removeFromLeft(abw));
+                alignRow2.removeFromLeft(Theme::SpaceXS);
+                alignCVBtn_.setBounds(alignRow2.removeFromLeft(abw));
+                alignRow2.removeFromLeft(Theme::SpaceXS);
+                distHBtn_.setBounds(alignRow2.removeFromLeft(abw));
+                alignRow2.removeFromLeft(Theme::SpaceXS);
+                distVBtn_.setBounds(alignRow2);
+            }
+            content.removeFromTop(Theme::SpaceSM);
+        }
+
+        // Morph section (when 2 selected)
+        if (morphLabel_.isVisible()) {
+            morphLabel_.setBounds(content.removeFromTop(18));
+            content.removeFromTop(3);
+            morphSlider_.setBounds(content.removeFromTop(24));
+            content.removeFromTop(3);
+            morphButton_.setBounds(content.removeFromTop(24));
+        }
     }
-    sidebar.removeFromTop(3);
-    {
-        auto alignRow2 = sidebar.removeFromTop(24);
-        int abw = (alignRow2.getWidth() - 3 * Theme::SpaceXS) / 4;
-        alignCHBtn_.setBounds(alignRow2.removeFromLeft(abw));
-        alignRow2.removeFromLeft(Theme::SpaceXS);
-        alignCVBtn_.setBounds(alignRow2.removeFromLeft(abw));
-        alignRow2.removeFromLeft(Theme::SpaceXS);
-        distHBtn_.setBounds(alignRow2.removeFromLeft(abw));
-        alignRow2.removeFromLeft(Theme::SpaceXS);
-        distVBtn_.setBounds(alignRow2);
+
+    // ===== MIDI Tab =====
+    if (activeTab == SidebarTabBar::MIDI) {
+        midiPanel_.setBounds(tabContent);
     }
-    sidebar.removeFromTop(Theme::SpaceSM);
 
-    // Morph section (shown when 2 shapes selected)
-    morphLabel_.setBounds(sidebar.removeFromTop(18));
-    sidebar.removeFromTop(3);
-    morphSlider_.setBounds(sidebar.removeFromTop(24));
-    sidebar.removeFromTop(3);
-    morphButton_.setBounds(sidebar.removeFromTop(24));
-    sidebar.removeFromTop(Theme::SpaceLG);
+    // ===== Output Tab =====
+    if (activeTab == SidebarTabBar::Output) {
+        outputPanel_.setBounds(tabContent);
+    }
 
-    // Shape Library section
-    {
-        auto libArea = sidebar.removeFromBottom(170);
-        libLabel_.setBounds(libArea.removeFromTop(18));
-        libArea.removeFromTop(3);
-        libraryList_.setBounds(libArea.removeFromTop(80));
-        libArea.removeFromTop(3);
+    // ===== Library Tab =====
+    if (activeTab == SidebarTabBar::Library) {
+        auto content = tabContent;
+
+        libLabel_.setBounds(content.removeFromTop(18));
+        content.removeFromTop(3);
+
+        // Library list fills available space minus buttons
+        int btnAreaH = 24 + 3 + 24;
+        auto btnArea = content.removeFromBottom(btnAreaH);
+
+        libraryList_.setBounds(content);
+
         {
-            auto btnRow1 = libArea.removeFromTop(24);
+            auto btnRow1 = btnArea.removeFromTop(24);
             int lbw = (btnRow1.getWidth() - 2 * Theme::SpaceXS) / 3;
             libSaveBtn_.setBounds(btnRow1.removeFromLeft(lbw));
             btnRow1.removeFromLeft(Theme::SpaceXS);
@@ -673,41 +743,123 @@ void EraeEditor::resized()
             btnRow1.removeFromLeft(Theme::SpaceXS);
             libDeleteBtn_.setBounds(btnRow1);
         }
-        libArea.removeFromTop(3);
+        btnArea.removeFromTop(3);
         {
-            auto btnRow2 = libArea.removeFromTop(24);
+            auto btnRow2 = btnArea.removeFromTop(24);
             int lbw = (btnRow2.getWidth() - Theme::SpaceXS) / 2;
             libFlipHBtn_.setBounds(btnRow2.removeFromLeft(lbw));
             btnRow2.removeFromLeft(Theme::SpaceXS);
             libFlipVBtn_.setBounds(btnRow2);
         }
     }
-    sidebar.removeFromBottom(Theme::SpaceLG);
-
-    // OSC settings section (at bottom of sidebar)
-    auto oscArea = sidebar.removeFromBottom(110);
-    oscLabel_.setBounds(oscArea.removeFromTop(18));
-    oscArea.removeFromTop(3);
-    oscToggle_.setBounds(oscArea.removeFromTop(22));
-    oscArea.removeFromTop(3);
-    {
-        auto row = oscArea.removeFromTop(22);
-        oscHostLabel_.setBounds(row.removeFromLeft(34));
-        oscHostEditor_.setBounds(row);
-        oscArea.removeFromTop(3);
-    }
-    {
-        auto row = oscArea.removeFromTop(22);
-        oscPortLabel_.setBounds(row.removeFromLeft(34));
-        oscPortSlider_.setBounds(row);
-    }
-
-    // Property panel gets the remaining space
-    propertyPanel_.setBounds(sidebar);
 
     // Canvas (with 2px inset for recessed effect)
     area.reduce(2, 2);
     canvas_.setBounds(area);
+}
+
+// ============================================================
+// Tab switching
+// ============================================================
+
+void EraeEditor::tabChanged(SidebarTabBar::Tab newTab)
+{
+    showTabContent(newTab);
+    resized();
+}
+
+void EraeEditor::showTabContent(SidebarTabBar::Tab tab)
+{
+    // Hide all tab content first
+    // Shape tab components
+    colorLabel_.setVisible(false);
+    colorPicker_.setVisible(false);
+    visualLabel_.setVisible(false);
+    visualBox_.setVisible(false);
+    fillHorizLabel_.setVisible(false);
+    fillHorizToggle_.setVisible(false);
+    showAlignmentButtons(false);
+    morphLabel_.setVisible(false);
+    morphSlider_.setVisible(false);
+    morphButton_.setVisible(false);
+
+    // MIDI tab
+    midiPanel_.setVisible(false);
+
+    // Output tab
+    outputPanel_.setVisible(false);
+
+    // Library tab
+    libLabel_.setVisible(false);
+    libraryList_.setVisible(false);
+    libSaveBtn_.setVisible(false);
+    libPlaceBtn_.setVisible(false);
+    libFlipHBtn_.setVisible(false);
+    libFlipVBtn_.setVisible(false);
+    libDeleteBtn_.setVisible(false);
+
+    // Show active tab content
+    switch (tab) {
+        case SidebarTabBar::Shape: {
+            colorLabel_.setVisible(true);
+            colorPicker_.setVisible(true);
+
+            auto singleId = selectionManager_.getSingleSelectedId();
+            bool multi = selectionManager_.count() > 1;
+
+            // Visual controls only when single shape selected
+            if (!singleId.empty()) {
+                visualLabel_.setVisible(true);
+                visualBox_.setVisible(true);
+                updateVisualControls();
+            }
+
+            // Alignment when 2+ selected
+            if (multi)
+                showAlignmentButtons(true);
+
+            // Morph when exactly 2 selected
+            if (selectionManager_.count() == 2) {
+                morphLabel_.setVisible(true);
+                morphSlider_.setVisible(true);
+                morphButton_.setVisible(true);
+            }
+            break;
+        }
+        case SidebarTabBar::MIDI:
+            midiPanel_.setVisible(true);
+            break;
+
+        case SidebarTabBar::Output:
+            outputPanel_.setVisible(true);
+            break;
+
+        case SidebarTabBar::Library:
+            libLabel_.setVisible(true);
+            libraryList_.setVisible(true);
+            libSaveBtn_.setVisible(true);
+            libPlaceBtn_.setVisible(true);
+            libFlipHBtn_.setVisible(true);
+            libFlipVBtn_.setVisible(true);
+            libDeleteBtn_.setVisible(true);
+            break;
+
+        default:
+            break;
+    }
+}
+
+void EraeEditor::updateVisualControls()
+{
+    auto singleId = selectionManager_.getSingleSelectedId();
+    if (singleId.empty()) return;
+    auto* s = processor_.getLayout().getShape(singleId);
+    if (!s) return;
+
+    auto vstyle = visualStyleFromString(s->visualStyle);
+    bool showFillHoriz = (vstyle == VisualStyle::FillBar);
+    fillHorizLabel_.setVisible(showFillHoriz);
+    fillHorizToggle_.setVisible(showFillHoriz);
 }
 
 // ============================================================
@@ -767,7 +919,7 @@ void EraeEditor::colorChanged(Color7 newColor)
 }
 
 // ============================================================
-// Property panel -> behavior/param changes
+// MidiPanel::Listener — behavior/param changes
 // ============================================================
 
 void EraeEditor::behaviorChanged(const std::string& shapeId)
@@ -775,7 +927,6 @@ void EraeEditor::behaviorChanged(const std::string& shapeId)
     auto* s = processor_.getLayout().getShape(shapeId);
     if (s) {
         processor_.getLayout().setBehavior(shapeId, s->behavior, s->behaviorParams);
-        // Rebuild DawFeedback lookup when note/channel assignments change
         processor_.getDawFeedback().updateFromLayout(processor_.getLayout());
     }
 }
@@ -793,6 +944,27 @@ void EraeEditor::midiLearnCancelled()
 }
 
 // ============================================================
+// OutputPanel::Listener — CV + OSC changes
+// ============================================================
+
+void EraeEditor::cvParamsChanged(const std::string& shapeId)
+{
+    auto* s = processor_.getLayout().getShape(shapeId);
+    if (s) {
+        processor_.getLayout().setBehavior(shapeId, s->behavior, s->behaviorParams);
+    }
+}
+
+void EraeEditor::oscSettingsChanged(bool enabled, const std::string& host, int port)
+{
+    auto& osc = processor_.getOscOutput();
+    if (enabled)
+        osc.enable(host, port);
+    else
+        osc.disable();
+}
+
+// ============================================================
 // Canvas selection callback
 // ============================================================
 
@@ -807,27 +979,36 @@ void EraeEditor::selectionChanged()
     updateSelectionInfo();
 
     auto singleId = selectionManager_.getSingleSelectedId();
-    bool multi = selectionManager_.count() > 1;
 
-    bool showMorph = (selectionManager_.count() == 2);
-    morphLabel_.setVisible(showMorph);
-    morphSlider_.setVisible(showMorph);
-    morphButton_.setVisible(showMorph);
-
+    // Update all panel data
     if (!singleId.empty()) {
         auto* s = processor_.getLayout().getShape(singleId);
         if (s) {
             colorPicker_.setColor(s->color);
-            propertyPanel_.loadShape(s);
+            midiPanel_.loadShape(s);
+            outputPanel_.loadShape(s);
+
+            // Visual style controls
+            auto vstyle = visualStyleFromString(s->visualStyle);
+            switch (vstyle) {
+                case VisualStyle::Static:       visualBox_.setSelectedId(1, juce::dontSendNotification); break;
+                case VisualStyle::FillBar:      visualBox_.setSelectedId(2, juce::dontSendNotification); break;
+                case VisualStyle::PositionDot:  visualBox_.setSelectedId(3, juce::dontSendNotification); break;
+                case VisualStyle::RadialArc:    visualBox_.setSelectedId(4, juce::dontSendNotification); break;
+                case VisualStyle::PressureGlow: visualBox_.setSelectedId(5, juce::dontSendNotification); break;
+            }
+            if (auto* vobj = s->visualParams.getDynamicObject())
+                if (vobj->hasProperty("fill_horizontal"))
+                    fillHorizToggle_.setToggleState((bool)vobj->getProperty("fill_horizontal"), juce::dontSendNotification);
         }
-        showAlignmentButtons(false);
-    } else if (multi) {
-        propertyPanel_.clearShape();
-        showAlignmentButtons(true);
     } else {
-        propertyPanel_.clearShape();
-        showAlignmentButtons(false);
+        midiPanel_.clearShape();
+        outputPanel_.clearShape();
     }
+
+    // Refresh visible tab content (don't auto-switch)
+    showTabContent(tabBar_.getActiveTab());
+    resized();
 }
 
 void EraeEditor::copyRequested()
@@ -1058,7 +1239,7 @@ void EraeEditor::timerCallback()
 
     // MIDI learn: poll for result and apply to target shape
     if (!midiLearnShapeId_.empty() && processor_.hasMidiLearnResult()) {
-        propertyPanel_.applyMidiLearnResult(
+        midiPanel_.applyMidiLearnResult(
             processor_.getMidiLearnNote(),
             processor_.getMidiLearnCC(),
             processor_.getMidiLearnChannel(),

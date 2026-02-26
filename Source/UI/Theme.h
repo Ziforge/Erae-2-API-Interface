@@ -27,6 +27,7 @@ namespace Theme {
     inline constexpr int ToolbarHeight   = 40;
     inline constexpr int SidebarWidth    = 270;
     inline constexpr int StatusBarHeight = 24;
+    inline constexpr int TabBarHeight    = 28;
     inline constexpr int DefaultWindowW  = 1440;
     inline constexpr int DefaultWindowH  = 860;
 

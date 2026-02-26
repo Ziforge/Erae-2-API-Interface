@@ -1,4 +1,4 @@
-#include "PropertyPanel.h"
+#include "MidiPanel.h"
 #include "../MIDI/VelocityCurve.h"
 #include "../MIDI/ScaleQuantizer.h"
 
@@ -25,7 +25,7 @@ static void styleSlider(juce::Slider& slider, double min, double max, double def
     slider.setColour(juce::Slider::textBoxTextColourId, Theme::Colors::Text);
 }
 
-PropertyPanel::PropertyPanel(Layout& layout)
+MidiPanel::MidiPanel(Layout& layout)
     : layout_(layout)
 {
     styleLabel(behaviorLabel_, true);
@@ -124,8 +124,6 @@ PropertyPanel::PropertyPanel(Layout& layout)
     mpeHint_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
     addAndMakeVisible(mpeHint_);
 
-    // --- Phase 2: Musical features ---
-
     // Velocity curve
     styleLabel(velCurveLabel_);
     velocityCurveBox_.addItem("Linear",      1);
@@ -198,7 +196,7 @@ PropertyPanel::PropertyPanel(Layout& layout)
     addAndMakeVisible(glideLabel_);
     addAndMakeVisible(glideSlider_);
 
-    // --- Phase 4: CC range sliders ---
+    // CC range sliders
     styleLabel(ccMinLabel_);
     styleSlider(ccMinSlider_, 0, 127, 0);
     ccMinSlider_.addListener(this);
@@ -235,59 +233,19 @@ PropertyPanel::PropertyPanel(Layout& layout)
     addAndMakeVisible(ccYMaxLabel_);
     addAndMakeVisible(ccYMaxSlider_);
 
-    // --- CV output ---
-    styleLabel(cvLabel_, true);
-    addAndMakeVisible(cvLabel_);
-
-    styleLabel(cvEnableLabel_);
-    cvEnableToggle_.addListener(this);
-    addAndMakeVisible(cvEnableLabel_);
-    addAndMakeVisible(cvEnableToggle_);
-
-    styleLabel(cvChannelLabel_);
-    styleSlider(cvChannelSlider_, 0, 31, 0);
-    cvChannelSlider_.addListener(this);
-    addAndMakeVisible(cvChannelLabel_);
-    addAndMakeVisible(cvChannelSlider_);
-
-    // Visual style
-    styleLabel(visualLabel_, true);
-    addAndMakeVisible(visualLabel_);
-
-    visualBox_.addItem("Static",        1);
-    visualBox_.addItem("Fill Bar",      2);
-    visualBox_.addItem("Position Dot",  3);
-    visualBox_.addItem("Radial Arc",    4);
-    visualBox_.addItem("Pressure Glow", 5);
-    visualBox_.addListener(this);
-    addAndMakeVisible(visualBox_);
-
-    styleLabel(fillHorizLabel_);
-    fillHorizToggle_.addListener(this);
-    addAndMakeVisible(fillHorizLabel_);
-    addAndMakeVisible(fillHorizToggle_);
-
     updateVisibility();
 }
 
-void PropertyPanel::paint(juce::Graphics& g)
+void MidiPanel::paint(juce::Graphics& g)
 {
     if (!currentShape_) return;
 
     g.setColour(Theme::Colors::Separator);
-    g.fillRect(0, 0, getWidth(), 1);
-
     int lineY1 = behaviorLabel_.getBottom() + 1;
-    g.setColour(Theme::Colors::Separator);
     g.fillRect(0, lineY1, getWidth(), 1);
-
-    if (visualLabel_.isVisible()) {
-        int lineY2 = visualLabel_.getBottom() + 1;
-        g.fillRect(0, lineY2, getWidth(), 1);
-    }
 }
 
-void PropertyPanel::resized()
+void MidiPanel::resized()
 {
     auto area = getLocalBounds();
     area.removeFromTop(6);
@@ -337,7 +295,7 @@ void PropertyPanel::resized()
     mpeHint_.setBounds(area.removeFromTop(16));
     area.removeFromTop(gap);
 
-    // Phase 2: Musical features
+    // Musical features
     layoutRow(velCurveLabel_, velocityCurveBox_);
     layoutRow(pressCurveLabel_, pressureCurveBox_);
     {
@@ -356,52 +314,21 @@ void PropertyPanel::resized()
     }
     layoutRow(glideLabel_, glideSlider_);
 
-    // Phase 4: CC ranges
+    // CC ranges
     layoutRow(ccMinLabel_, ccMinSlider_);
     layoutRow(ccMaxLabel_, ccMaxSlider_);
     layoutRow(ccXMinLabel_, ccXMinSlider_);
     layoutRow(ccXMaxLabel_, ccXMaxSlider_);
     layoutRow(ccYMinLabel_, ccYMinSlider_);
     layoutRow(ccYMaxLabel_, ccYMaxSlider_);
-
-    area.removeFromTop(gap + 2);
-
-    // CV output section
-    cvLabel_.setBounds(area.removeFromTop(18));
-    area.removeFromTop(3);
-    {
-        auto row = area.removeFromTop(rowH);
-        cvEnableLabel_.setBounds(row.removeFromLeft(labelW));
-        cvEnableToggle_.setBounds(row.removeFromLeft(rowH));
-        area.removeFromTop(3);
-    }
-    layoutRow(cvChannelLabel_, cvChannelSlider_);
-    area.removeFromTop(gap + 2);
-
-    // Visual style section
-    visualLabel_.setBounds(area.removeFromTop(18));
-    area.removeFromTop(3);
-    visualBox_.setBounds(area.removeFromTop(rowH));
-    area.removeFromTop(gap);
-
-    {
-        auto row = area.removeFromTop(rowH);
-        fillHorizLabel_.setBounds(row.removeFromLeft(labelW));
-        fillHorizToggle_.setBounds(row.removeFromLeft(rowH));
-        area.removeFromTop(3);
-    }
 }
 
-void PropertyPanel::loadShape(Shape* shape)
+void MidiPanel::loadShape(Shape* shape)
 {
     currentShape_ = shape;
-    if (!shape) {
-        setVisible(false);
-        return;
-    }
+    if (!shape) return;
 
     loading_ = true;
-    setVisible(true);
 
     auto btype = behaviorFromString(shape->behavior);
     switch (btype) {
@@ -452,7 +379,7 @@ void PropertyPanel::loadShape(Shape* shape)
     ccXSlider_.setRange(0, maxCC, 1.0);
     ccYSlider_.setRange(0, maxCC, 1.0);
 
-    // Phase 2: Musical features
+    // Musical features
     auto velCurveStr = getPString("velocity_curve", "linear");
     auto velCurve = curveFromString(velCurveStr);
     velocityCurveBox_.setSelectedId((int)velCurve + 1, juce::dontSendNotification);
@@ -483,7 +410,7 @@ void PropertyPanel::loadShape(Shape* shape)
     pitchQuantizeToggle_.setToggleState(getPBool("pitch_quantize", false), juce::dontSendNotification);
     glideSlider_.setValue(getPFloat("glide_amount", 0.0f), juce::dontSendNotification);
 
-    // Phase 4: CC ranges
+    // CC ranges
     ccMinSlider_.setValue(getP("cc_min", 0), juce::dontSendNotification);
     ccMaxSlider_.setValue(getP("cc_max", 127), juce::dontSendNotification);
     ccXMinSlider_.setValue(getP("cc_x_min", 0), juce::dontSendNotification);
@@ -491,39 +418,16 @@ void PropertyPanel::loadShape(Shape* shape)
     ccYMinSlider_.setValue(getP("cc_y_min", 0), juce::dontSendNotification);
     ccYMaxSlider_.setValue(getP("cc_y_max", 127), juce::dontSendNotification);
 
-    // CV output
-    cvEnableToggle_.setToggleState(getPBool("cv_enabled", false), juce::dontSendNotification);
-    cvChannelSlider_.setValue(getP("cv_channel", 0), juce::dontSendNotification);
-
-    // Visual style
-    auto vstyle = visualStyleFromString(shape->visualStyle);
-    switch (vstyle) {
-        case VisualStyle::Static:       visualBox_.setSelectedId(1, juce::dontSendNotification); break;
-        case VisualStyle::FillBar:      visualBox_.setSelectedId(2, juce::dontSendNotification); break;
-        case VisualStyle::PositionDot:  visualBox_.setSelectedId(3, juce::dontSendNotification); break;
-        case VisualStyle::RadialArc:    visualBox_.setSelectedId(4, juce::dontSendNotification); break;
-        case VisualStyle::PressureGlow: visualBox_.setSelectedId(5, juce::dontSendNotification); break;
-    }
-
-    auto getVP = [&](const juce::String& key, bool def) -> bool {
-        if (auto* obj = shape->visualParams.getDynamicObject())
-            if (obj->hasProperty(key))
-                return (bool)obj->getProperty(key);
-        return def;
-    };
-    fillHorizToggle_.setToggleState(getVP("fill_horizontal", false), juce::dontSendNotification);
-
     updateVisibility();
     loading_ = false;
 }
 
-void PropertyPanel::clearShape()
+void MidiPanel::clearShape()
 {
     currentShape_ = nullptr;
-    setVisible(false);
 }
 
-void PropertyPanel::comboBoxChanged(juce::ComboBox* box)
+void MidiPanel::comboBoxChanged(juce::ComboBox* box)
 {
     if (loading_ || !currentShape_) return;
 
@@ -555,27 +459,13 @@ void PropertyPanel::comboBoxChanged(juce::ComboBox* box)
             ccYSlider_.setValue(ccY, juce::dontSendNotification);
         }
     }
-    else if (box == &visualBox_) {
-        int id = visualBox_.getSelectedId();
-        VisualStyle vstyle;
-        switch (id) {
-            case 1: vstyle = VisualStyle::Static; break;
-            case 2: vstyle = VisualStyle::FillBar; break;
-            case 3: vstyle = VisualStyle::PositionDot; break;
-            case 4: vstyle = VisualStyle::RadialArc; break;
-            case 5: vstyle = VisualStyle::PressureGlow; break;
-            default: return;
-        }
-        currentShape_->visualStyle = visualStyleToString(vstyle);
-    }
-    // velocity/pressure curves and scale handled via writeParamsToShape
 
     updateVisibility();
     writeParamsToShape();
     notifyListeners();
 }
 
-void PropertyPanel::sliderValueChanged(juce::Slider* slider)
+void MidiPanel::sliderValueChanged(juce::Slider* slider)
 {
     if (loading_ || !currentShape_) return;
 
@@ -597,7 +487,7 @@ void PropertyPanel::sliderValueChanged(juce::Slider* slider)
     notifyListeners();
 }
 
-void PropertyPanel::buttonClicked(juce::Button* button)
+void MidiPanel::buttonClicked(juce::Button* button)
 {
     if (loading_ || !currentShape_) return;
 
@@ -608,14 +498,14 @@ void PropertyPanel::buttonClicked(juce::Button* button)
         ccYSlider_.setRange(0, maxCC, 1.0);
     }
 
-    if (button == &pitchQuantizeToggle_ || button == &cvEnableToggle_)
+    if (button == &pitchQuantizeToggle_)
         updateVisibility();
 
     writeParamsToShape();
     notifyListeners();
 }
 
-void PropertyPanel::updateVisibility()
+void MidiPanel::updateVisibility()
 {
     auto btype = currentShape_ ? behaviorFromString(currentShape_->behavior) : BehaviorType::Trigger;
 
@@ -629,16 +519,14 @@ void PropertyPanel::updateVisibility()
     bool showSlideCC  = (btype == BehaviorType::NotePad);
     bool showMPEHint  = (btype == BehaviorType::NotePad);
 
-    // Phase 2: Musical features visibility
     bool showVelCurve   = (btype == BehaviorType::Trigger || btype == BehaviorType::Momentary || btype == BehaviorType::NotePad);
     bool showPressCurve = (btype == BehaviorType::Momentary || btype == BehaviorType::NotePad);
     bool showLatch      = (btype == BehaviorType::Trigger);
     bool showScale      = (btype == BehaviorType::NotePad);
-    bool showRootNote   = showScale && (scaleBox_.getSelectedId() > 1); // not chromatic
+    bool showRootNote   = showScale && (scaleBox_.getSelectedId() > 1);
     bool showPitchQuant = (btype == BehaviorType::NotePad);
     bool showGlide      = showPitchQuant && pitchQuantizeToggle_.getToggleState();
 
-    // Phase 4: CC ranges
     bool showCCRange    = (btype == BehaviorType::Fader);
     bool showCCXYRange  = (btype == BehaviorType::XYController);
 
@@ -690,34 +578,15 @@ void PropertyPanel::updateVisibility()
     ccYMinSlider_.setVisible(showCCXYRange);
     ccYMaxLabel_.setVisible(showCCXYRange);
     ccYMaxSlider_.setVisible(showCCXYRange);
-
-    bool hasShape = (currentShape_ != nullptr);
-
-    // CV controls: always visible when shape selected
-    cvLabel_.setVisible(hasShape);
-    cvEnableLabel_.setVisible(hasShape);
-    cvEnableToggle_.setVisible(hasShape);
-    bool showCVCh = hasShape && cvEnableToggle_.getToggleState();
-    cvChannelLabel_.setVisible(showCVCh);
-    cvChannelSlider_.setVisible(showCVCh);
-
-    visualLabel_.setVisible(hasShape);
-    visualBox_.setVisible(hasShape);
-
-    auto vstyle = currentShape_ ? visualStyleFromString(currentShape_->visualStyle) : VisualStyle::Static;
-    bool showFillHoriz = hasShape && (vstyle == VisualStyle::FillBar);
-    fillHorizLabel_.setVisible(showFillHoriz);
-    fillHorizToggle_.setVisible(showFillHoriz);
 }
 
-void PropertyPanel::writeParamsToShape()
+void MidiPanel::writeParamsToShape()
 {
     if (!currentShape_) return;
 
     auto btype = behaviorFromString(currentShape_->behavior);
     auto* obj = new juce::DynamicObject();
 
-    // Velocity/pressure curve helpers
     auto curveIdToString = [](int id) -> juce::String {
         switch (id) {
             case 2: return "exponential";
@@ -746,7 +615,6 @@ void PropertyPanel::writeParamsToShape()
             obj->setProperty("slide_cc", (int)slideCCSlider_.getValue());
             obj->setProperty("velocity_curve", curveIdToString(velocityCurveBox_.getSelectedId()));
             obj->setProperty("pressure_curve", curveIdToString(pressureCurveBox_.getSelectedId()));
-            // Scale quantization
             auto scaleNames = std::vector<std::string>{
                 "chromatic", "major", "natural_minor", "harmonic_minor",
                 "pentatonic", "minor_pentatonic", "whole_tone", "blues",
@@ -786,28 +654,25 @@ void PropertyPanel::writeParamsToShape()
         }
     }
 
-    // CV output (all behaviors)
-    obj->setProperty("cv_enabled", cvEnableToggle_.getToggleState());
-    obj->setProperty("cv_channel", (int)cvChannelSlider_.getValue());
+    // Preserve CV params from existing behaviorParams
+    if (auto* existing = currentShape_->behaviorParams.getDynamicObject()) {
+        if (existing->hasProperty("cv_enabled"))
+            obj->setProperty("cv_enabled", existing->getProperty("cv_enabled"));
+        if (existing->hasProperty("cv_channel"))
+            obj->setProperty("cv_channel", existing->getProperty("cv_channel"));
+    }
 
     currentShape_->behaviorParams = juce::var(obj);
-
-    // Write visual params
-    auto vstyle = visualStyleFromString(currentShape_->visualStyle);
-    auto* vobj = new juce::DynamicObject();
-    if (vstyle == VisualStyle::FillBar)
-        vobj->setProperty("fill_horizontal", fillHorizToggle_.getToggleState());
-    currentShape_->visualParams = juce::var(vobj);
 }
 
-void PropertyPanel::notifyListeners()
+void MidiPanel::notifyListeners()
 {
     if (!currentShape_) return;
     for (auto* l : listeners_)
         l->behaviorChanged(currentShape_->id);
 }
 
-void PropertyPanel::setMidiLearnActive(bool active)
+void MidiPanel::setMidiLearnActive(bool active)
 {
     if (active) {
         midiLearnBtn_.setButtonText("Cancel");
@@ -818,7 +683,7 @@ void PropertyPanel::setMidiLearnActive(bool active)
     }
 }
 
-void PropertyPanel::applyMidiLearnResult(int note, int cc, int channel, bool isCC)
+void MidiPanel::applyMidiLearnResult(int note, int cc, int channel, bool isCC)
 {
     if (!currentShape_) return;
 
@@ -827,14 +692,12 @@ void PropertyPanel::applyMidiLearnResult(int note, int cc, int channel, bool isC
 
     auto btype = behaviorFromString(currentShape_->behavior);
     if (isCC) {
-        // CC learned → apply to cc/ccX slider depending on behavior
         if (btype == BehaviorType::Fader) {
             ccSlider_.setValue(cc, juce::dontSendNotification);
         } else if (btype == BehaviorType::XYController) {
             ccXSlider_.setValue(cc, juce::dontSendNotification);
         }
     } else {
-        // Note learned → apply to note slider
         noteSlider_.setValue(note, juce::dontSendNotification);
     }
     loading_ = false;
