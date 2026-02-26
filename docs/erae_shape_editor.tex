@@ -1,0 +1,404 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{longtable}
+\usepackage{array}
+
+\definecolor{accent}{HTML}{3A7BDE}
+\hypersetup{colorlinks=true, linkcolor=accent, urlcolor=accent}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small Erae Shape Editor}
+\fancyhead[R]{\small Technical Reference}
+\fancyfoot[C]{\thepage}
+
+\titleformat{\section}{\large\bfseries\color{accent}}{}{0em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{}{0em}{}
+
+\title{\textbf{Erae Shape Editor}\\[0.3em]\large Technical Reference \& Architecture}
+\author{George Roberts}
+\date{February 2026}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+% ------------------------------------------------------------------
+\section{Overview}
+
+The Erae Shape Editor is a visual layout editor and expressive MIDI controller for the Erae Touch~II hardware surface. Built with JUCE as both a VST3 plugin and standalone application, it provides a complete authoring environment for designing touch-responsive zones on the Erae's 42$\times$24 LED grid, assigning MIDI behaviors, and applying real-time visual and physics-based touch effects.
+
+The software communicates with the Erae~II over USB MIDI using the Embodme SysEx API, rendering layouts in real time on the hardware LED surface while streaming multi-touch finger events back to the host for MIDI generation, effect processing, and modulation output.
+
+\subsection{Key Capabilities}
+\begin{itemize}[nosep]
+  \item 5 shape types with full geometric editing (rect, circle, hex, polygon, pixel)
+  \item 5 MIDI behaviors including MPE polyphonic expression
+  \item 19 touch effects (8 visual, 11 physics-based)
+  \item 5 visual rendering styles per shape
+  \item Multi-page layouts with up to 8 pages
+  \item Real-time LED rendering on Erae~II hardware
+  \item Modulation routing to MIDI~CC, pitch bend, pressure, CV, OSC, and MPE
+  \item Shape library with 19 built-in effect templates and user persistence
+  \item Gesture looper for recording and replaying touch sequences
+  \item DAW feedback: incoming MIDI highlights matching shapes
+\end{itemize}
+
+% ------------------------------------------------------------------
+\section{Architecture}
+
+\subsection{Source Organisation}
+
+\begin{longtable}{@{}l p{9cm}@{}}
+\toprule
+\textbf{Directory} & \textbf{Responsibility} \\
+\midrule
+\texttt{Source/Core/}      & Undo/redo, selection, clipboard, shape library, gesture looping, alignment tools \\
+\texttt{Source/Model/}     & Shape data model, layout, presets, JSON serialisation \\
+\texttt{Source/UI/}        & JUCE components: grid canvas, sidebar tabs, colour picker, theme, panels \\
+\texttt{Source/Erae/}      & Hardware connection, SysEx protocol, finger stream parsing \\
+\texttt{Source/MIDI/}      & Behavior engine, MPE allocator, MIDI/OSC/CV output, DAW feedback \\
+\texttt{Source/Effects/}   & Touch effect engine (19 types), effect state, modulation dispatch \\
+\texttt{Source/Rendering/} & LED pixel rendering, widget state, per-finger colour palette \\
+\texttt{Tests/}            & Automated test suite (506 assertions) \\
+\bottomrule
+\end{longtable}
+
+\subsection{Class Hierarchy}
+
+The plugin follows a standard JUCE architecture with \texttt{EraeProcessor} (audio thread) and \texttt{EraeEditor} (UI thread) as entry points.
+
+\begin{description}[style=nextline, leftmargin=2em]
+  \item[\texttt{EraeProcessor}] Owns the \texttt{MultiPageLayout}, \texttt{BehaviorEngine}, \texttt{TouchEffectEngine}, \texttt{EraeConnection}, \texttt{MPEAllocator}, \texttt{GestureLooper}, and all output objects (MIDI, OSC, CV).
+  \item[\texttt{EraeEditor}] Owns the \texttt{GridCanvas}, \texttt{SelectionManager}, \texttt{SidebarTabBar}, \texttt{ShapeLibrary}, and all UI panels.
+  \item[\texttt{MultiPageLayout}] Contains up to 8 \texttt{Layout} pages, each holding a vector of \texttt{Shape} pointers.
+  \item[\texttt{TouchEffectEngine}] Maintains per-shape \texttt{ShapeEffectState} maps, advances physics at 20\,fps, and dispatches modulation.
+\end{description}
+
+\subsection{Threading Model}
+
+\begin{itemize}[nosep]
+  \item \textbf{Audio thread}: \texttt{processBlock()} reads CV channels, dispatches finger events through the behavior engine, updates effect state.
+  \item \textbf{UI thread}: Layout editing, selection, undo/redo, canvas rendering.
+  \item \textbf{Timer thread}: 20\,fps timer for effect advancement, LED rendering, gesture looper, DAW feedback polling.
+  \item Thread safety via \texttt{juce::SpinLock} for finger state, MIDI state, CV output, and OSC output.
+\end{itemize}
+
+% ------------------------------------------------------------------
+\section{Shape Types}
+
+Five shape types are supported, all deriving from a common \texttt{Shape} base class:
+
+\begin{longtable}{@{}l l p{7cm}@{}}
+\toprule
+\textbf{Type} & \textbf{Parameters} & \textbf{Description} \\
+\midrule
+Rectangle  & x, y, width, height      & Axis-aligned rectangle on the grid \\
+Circle     & x, y, radius             & Circle centred at (x,y) \\
+Hexagon    & x, y, radius             & Regular hexagon (isomorphic layout) \\
+Polygon    & x, y, vertices[]         & Arbitrary convex or concave polygon \\
+Pixel      & x, y, cells[]            & Freeform grid cells (painted individually) \\
+\bottomrule
+\end{longtable}
+
+Each shape carries: colour (7-bit RGB for Erae hardware), behavior type \& parameters, visual style, effect parameters, and an optional description.
+
+% ------------------------------------------------------------------
+\section{MIDI Behaviors}
+
+\begin{longtable}{@{}l p{9cm}@{}}
+\toprule
+\textbf{Behavior} & \textbf{Description} \\
+\midrule
+Trigger     & Note on/off on touch down/up. Configurable velocity curves and latch mode. \\
+Momentary   & Note held while touching. Independent velocity and aftertouch pressure curves. \\
+NotePad     & MPE per-finger polyphony. Pitch bend (X), slide CC74 (Y), pressure (Z). 10 scale quantisations with glide. \\
+XYController & Two independent CC values from X/Y position. 7-bit or 14-bit high-resolution. \\
+Fader       & Single CC from finger position along one axis. 7-bit or 14-bit. \\
+\bottomrule
+\end{longtable}
+
+\subsection{MPE Allocation}
+
+The \texttt{MPEAllocator} manages MIDI channels 2--16 (15 channels) for polyphonic per-finger expression in the lower zone. Channel 1 is reserved for global messages.
+
+\subsection{Velocity \& Pressure Curves}
+
+Four curve types are available for both velocity and aftertouch: Linear, Exponential, Logarithmic, and S-Curve.
+
+% ------------------------------------------------------------------
+\section{Touch Effects}
+
+19 touch effect types are available, divided into visual effects and physics-based simulations. All effects run at 20\,fps and produce normalised modulation values (modX, modY, modZ in $[0,1]$) that can be routed to any output target.
+
+\subsection{Visual Effects (8)}
+
+\begin{longtable}{@{}l p{9cm}@{}}
+\toprule
+\textbf{Effect} & \textbf{Description} \\
+\midrule
+Trail       & Fading dot trail following finger motion \\
+Ripple      & Concentric expanding rings from touch point \\
+Particles   & Burst of particles from touch with configurable lifetime \\
+Pulse       & Rhythmic brightness oscillation at touch location \\
+Breathe     & Slow sinusoidal glow across the entire shape \\
+Spin        & Rotating dots around the touch point \\
+Orbit       & Dots orbiting a pivot finger; radius controlled by second finger \\
+Boundary    & Convex hull outlined between multiple fingers \\
+\bottomrule
+\end{longtable}
+
+\subsection{Physics-Based Effects (11)}
+
+\begin{longtable}{@{}l p{9cm}@{}}
+\toprule
+\textbf{Effect} & \textbf{Description} \\
+\midrule
+String          & 1D wave equation with fixed endpoints; plucked by two-finger placement \\
+Membrane        & 2D wave equation on shape-relative grid; touch creates displacement \\
+Fluid           & Navier--Stokes velocity field with semi-Lagrangian advection \\
+Spring Lattice  & 2D mass-spring grid with nearest-neighbour coupling \\
+Pendulum        & Single or double pendulum with Lagrangian dynamics \\
+Collision       & Elastic ball collision with gravity and wall bouncing \\
+Tombolo         & Erosion/deposition cellular automaton (sandpile model) \\
+Gravity Well    & N-body gravitational attraction with particle spawning \\
+Elastic Band    & Chain of spring-connected nodes between anchor fingers \\
+Bow             & Stick-slip friction model (Helmholtz motion) \\
+Wave Interference & Superposition of point-source circular waves \\
+\bottomrule
+\end{longtable}
+
+\subsection{Shape-Relative Grid Fields}
+
+Grid-field effects (Membrane, Fluid, Spring Lattice, Tombolo, Wave Interference) allocate simulation grids sized to the shape's bounding box rather than the full 42$\times$24 surface. Touch coordinates are translated to shape-local space:
+
+\begin{verbatim}
+  gridWidth  = ceil(bbox.xMax - bbox.xMin)
+  gridHeight = ceil(bbox.yMax - bbox.yMin)
+  localX = touchX - bbox.xMin
+  localY = touchY - bbox.yMin
+\end{verbatim}
+
+For rendering, grid coordinates are offset back to absolute surface position using stored \texttt{gridOriginX/Y} values.
+
+\subsection{Modulation Normalisation}
+
+All effects normalise their modulation output to the shape's bounding box:
+
+\[
+  \text{modX} = \text{clamp}\!\left(\frac{x - x_{\min}}{x_{\max} - x_{\min}},\; 0,\; 1\right)
+\]
+
+This ensures consistent 0--1 modulation output regardless of shape position or size on the surface.
+
+\subsection{Modulation Targets}
+
+Effect modulation values can be routed to:
+\begin{itemize}[nosep]
+  \item MIDI CC (configurable channel and CC number)
+  \item Pitch Bend (14-bit)
+  \item Channel Pressure
+  \item CV (constant-value audio channels, 1V/oct or 0--1)
+  \item OSC (UDP messages to configurable host:port)
+  \item MPE (per-finger X/Y/Z expression)
+\end{itemize}
+
+% ------------------------------------------------------------------
+\section{Visual Styles}
+
+Each shape can be rendered with one of five visual styles, both on-screen and on the Erae~II hardware:
+
+\begin{longtable}{@{}l p{9cm}@{}}
+\toprule
+\textbf{Style} & \textbf{Description} \\
+\midrule
+Static        & Solid colour fill \\
+Pressure Glow & Colour intensity tracks finger pressure \\
+Fill Bar      & Vertical or horizontal fill level follows finger position \\
+Position Dot  & Bright dot tracks finger position within shape \\
+Radial Arc    & Arc sweeps based on finger angle from shape centre \\
+\bottomrule
+\end{longtable}
+
+% ------------------------------------------------------------------
+\section{Preset System}
+
+\subsection{Built-in Presets (11)}
+
+\begin{longtable}{@{}l p{9cm}@{}}
+\toprule
+\textbf{Preset} & \textbf{Description} \\
+\midrule
+Drum Pads       & 4$\times$3 grid of trigger pads (GM mapping) \\
+Piano           & Two-octave chromatic keyboard layout \\
+Wicki-Hayden    & Isomorphic hexagonal note layout \\
+Fader Bank      & 8 vertical faders (CC 1--8) \\
+XY Pad          & Single large XY controller \\
+Buchla Thunder  & Irregular zones inspired by Don Buchla's Thunder controller \\
+Auto Harp       & Chord-strumming strips \\
+Harmonic Table  & Tonnetz-adjacent hexagonal pitch layout \\
+Kaoss Pad       & Large XY zone with effect overlay \\
+Circle of Fifths & Radial arrangement of 12 keys \\
+Tonnetz         & Neo-Riemannian hexagonal pitch network \\
+\bottomrule
+\end{longtable}
+
+\subsection{Effect Templates (19)}
+
+Each of the 19 touch effects has a pre-configured template in the shape library: a shape with appropriate geometry, colour, NotePad behaviour, Pressure Glow visual style, and the effect type pre-assigned with MPE modulation.
+
+\subsection{Shape Library}
+
+The shape library provides persistent storage for shape configurations:
+\begin{itemize}[nosep]
+  \item 19 built-in effect templates (protected from deletion or rename)
+  \item User-saved shapes with JSON persistence
+  \item Operations: Save, Place, Flip H/V, Duplicate, Delete, Rename (double-click)
+  \item Preview with animated effect visualisation for entries with effects
+\end{itemize}
+
+% ------------------------------------------------------------------
+\section{Hardware Integration}
+
+\subsection{Connection}
+
+The editor auto-detects the Erae~II via USB MIDI, connecting to the ``Lab'' port for output and ``Main'' port for input. An auto-reconnect timer handles USB disconnection.
+
+\subsection{SysEx Protocol}
+
+Communication uses Embodme's SysEx API with 7-bit bitisation for binary data. Key operations:
+\begin{itemize}[nosep]
+  \item \texttt{enableApi()} / \texttt{disableApi()} --- acquire/release control of the LED surface
+  \item \texttt{drawPixel(x, y, r, g, b)} --- set individual LED colour
+  \item \texttt{drawRect(x, y, w, h, r, g, b)} --- fill rectangular region
+  \item \texttt{drawImage(data)} --- send full-frame image chunk (all 24 rows)
+  \item \texttt{clearZone()} --- blank the LED surface
+\end{itemize}
+
+\subsection{Finger Stream}
+
+Finger events are received as bitised SysEx containing:
+\begin{itemize}[nosep]
+  \item 64-bit finger ID (unique per touch)
+  \item Action type: Down, Move, Up
+  \item X, Y position (float, grid coordinates)
+  \item Z pressure (float, 0--1)
+\end{itemize}
+
+\subsection{LED Rendering}
+
+The \texttt{EraeRenderer} converts layout state, widget state, and effect state into Erae~II pixel commands at 20\,fps. Full-frame image chunks are used to avoid visible flashing.
+
+% ------------------------------------------------------------------
+\section{Output Formats}
+
+\begin{longtable}{@{}l p{9cm}@{}}
+\toprule
+\textbf{Output} & \textbf{Details} \\
+\midrule
+MIDI  & 16-channel output. Channel 1 global, channels 2--16 MPE lower zone. Note on/off, CC, pitch bend, aftertouch. \\
+OSC   & UDP mirror of all MIDI and effect events to configurable host:port. \\
+CV    & Up to 32 audio channels. 1V/oct pitch, 0/1 gates, 0--1 continuous modulation. \\
+DAW Feedback & Incoming MIDI from DAW highlights matching shapes with pulsing glow. \\
+\bottomrule
+\end{longtable}
+
+% ------------------------------------------------------------------
+\section{Gesture Looper}
+
+The gesture looper records and replays finger event sequences:
+\begin{itemize}[nosep]
+  \item \textbf{Record}: Captures raw \texttt{FingerEvent} stream with timestamps
+  \item \textbf{Replay}: Loops events through the full MIDI and effect pipeline
+  \item \textbf{ID Remapping}: Replayed finger IDs use bit~63 set to avoid collision with live fingers
+  \item \textbf{Transport}: Controlled via toolbar buttons or Erae~II hardware Play/Stop buttons
+\end{itemize}
+
+% ------------------------------------------------------------------
+\section{Build System}
+
+\subsection{Targets}
+
+\begin{longtable}{@{}l p{9cm}@{}}
+\toprule
+\textbf{Target} & \textbf{Description} \\
+\midrule
+\texttt{EraeShapeEditor\_Standalone} & Standalone application \\
+\texttt{EraeShapeEditor\_VST3}       & VST3 plugin \\
+\texttt{EraeTests}                   & Test binary (506 assertions) \\
+\bottomrule
+\end{longtable}
+
+\subsection{Dependencies}
+
+\begin{itemize}[nosep]
+  \item JUCE 7.0.9 (fetched via CMake \texttt{FetchContent})
+  \item C++17 compiler
+  \item JUCE modules: \texttt{juce\_audio\_utils}, \texttt{juce\_audio\_basics}, \texttt{juce\_audio\_processors}, \texttt{juce\_gui\_basics}, \texttt{juce\_core}, \texttt{juce\_graphics}, \texttt{juce\_audio\_devices}
+\end{itemize}
+
+\subsection{Build Commands}
+
+\begin{verbatim}
+  cmake -B build -DCMAKE_BUILD_TYPE=Release
+  cmake --build build --target EraeShapeEditor_Standalone
+  cmake --build build --target EraeTests
+  ./build/EraeTests_artefacts/Release/Erae\ Tests
+\end{verbatim}
+
+% ------------------------------------------------------------------
+\section{Test Suite}
+
+The test suite validates the complete effect template and shape library system with 506 automated assertions across 9 test groups:
+
+\begin{longtable}{@{}l r p{6cm}@{}}
+\toprule
+\textbf{Test Group} & \textbf{Checks} & \textbf{Coverage} \\
+\midrule
+Effect Templates       & 190 & All 19 templates: name, type, colour, behavior, visual style, effect params \\
+Shape Clone            & 10  & Type preservation across all 5 shape types \\
+Shape Library          & 25  & Built-in protection, user entry CRUD, index bounds \\
+Library Save/Load      & 10  & JSON round-trip with colour and type preservation \\
+Place on Canvas        & 57  & All 19 templates placed with correct type and effect params \\
+Shape Dimensions       & 37  & Bounding box accuracy for all template shapes \\
+JSON Round-Trip        & 77  & Full serialisation/deserialisation for all shapes \\
+Unique Colours         & 1   & All 19 templates have distinct colours \\
+Grid-Field Sizing      & 29  & Shape-relative grid init, OOB safety, coordinate translation \\
+\bottomrule
+\end{longtable}
+
+% ------------------------------------------------------------------
+\section{Keyboard Shortcuts}
+
+\begin{longtable}{@{}l l@{}}
+\toprule
+\textbf{Shortcut} & \textbf{Action} \\
+\midrule
+Ctrl+Z / Ctrl+Shift+Z & Undo / Redo \\
+Ctrl+A            & Select All \\
+Ctrl+C / X / V    & Copy / Cut / Paste \\
+Ctrl+D            & Duplicate \\
+Delete / Backspace & Remove selected \\
+Arrow keys        & Nudge selected shape \\
+V                 & Select tool \\
+B                 & Paint tool \\
+E                 & Erase tool \\
+R / C / H / P / G & Draw Rect / Circle / Hex / Polygon / Pixel \\
+Scroll wheel      & Zoom \\
+Middle-click drag & Pan \\
+\bottomrule
+\end{longtable}
+
+% ------------------------------------------------------------------
+\section{License}
+
+This software is released under the Creative Commons Attribution-NonCommercial 4.0 International License (CC~BY-NC~4.0). Commercial use requires a separate licensing agreement.
+
+\end{document}
