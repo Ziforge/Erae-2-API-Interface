@@ -185,6 +185,26 @@ void EraeConnection::removeListener(Listener* l)
 void EraeConnection::handleIncomingMidiMessage(juce::MidiInput*,
                                                 const juce::MidiMessage& message)
 {
+    // Page switch: CC 102-109 on channel 16, value 127 = page entered
+    if (message.isController() && message.getChannel() == 16) {
+        int cc = message.getControllerNumber();
+        if (cc >= 102 && cc <= 109 && message.getControllerValue() == 127) {
+            int pageIndex = cc - 102;
+            DBG("[erae] Page switch: " + juce::String(pageIndex));
+            std::lock_guard<std::mutex> lock(listenerMutex_);
+            for (auto* l : listeners_)
+                l->pageChangeReceived(pageIndex);
+        }
+    }
+
+    if (message.isMidiStart() || message.isMidiStop()) {
+        bool isStart = message.isMidiStart();
+        DBG("[erae] Transport: " + juce::String(isStart ? "Start" : "Stop"));
+        std::lock_guard<std::mutex> lock(listenerMutex_);
+        for (auto* l : listeners_)
+            l->transportReceived(isStart);
+    }
+
     if (!message.isSysEx()) return;
 
     auto* raw = message.getSysExData();

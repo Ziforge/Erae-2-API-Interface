@@ -119,6 +119,13 @@ MidiPanel::MidiPanel(Layout& layout)
     addAndMakeVisible(slideCCLabel_);
     addAndMakeVisible(slideCCSlider_);
 
+    // PB Range slider (1-48 semitones, default 2)
+    styleLabel(pbRangeLabel_);
+    styleSlider(pbRangeSlider_, 1, 48, 2);
+    pbRangeSlider_.addListener(this);
+    addAndMakeVisible(pbRangeLabel_);
+    addAndMakeVisible(pbRangeSlider_);
+
     // MPE hint
     mpeHint_.setFont(juce::Font(Theme::FontSmall, juce::Font::italic));
     mpeHint_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
@@ -274,6 +281,7 @@ void MidiPanel::resized()
     layoutRow(ccXLabel_, ccXSlider_);
     layoutRow(ccYLabel_, ccYSlider_);
     layoutRow(slideCCLabel_, slideCCSlider_);
+    layoutRow(pbRangeLabel_, pbRangeSlider_);
 
     // Horizontal toggle row
     {
@@ -371,6 +379,7 @@ void MidiPanel::loadShape(Shape* shape)
     ccXSlider_.setValue(getP("cc_x", 1), juce::dontSendNotification);
     ccYSlider_.setValue(getP("cc_y", 2), juce::dontSendNotification);
     slideCCSlider_.setValue(getP("slide_cc", 74), juce::dontSendNotification);
+    pbRangeSlider_.setValue(getP("pitchbend_range", 2), juce::dontSendNotification);
     horizToggle_.setToggleState(getPBool("horizontal", false), juce::dontSendNotification);
     bool hr = getPBool("highres", false);
     highresToggle_.setToggleState(hr, juce::dontSendNotification);
@@ -549,6 +558,8 @@ void MidiPanel::updateVisibility()
     highresToggle_.setVisible(showHighres);
     slideCCLabel_.setVisible(showSlideCC);
     slideCCSlider_.setVisible(showSlideCC);
+    pbRangeLabel_.setVisible(showSlideCC);
+    pbRangeSlider_.setVisible(showSlideCC);
     mpeHint_.setVisible(showMPEHint);
 
     velCurveLabel_.setVisible(showVelCurve);
@@ -626,6 +637,7 @@ void MidiPanel::writeParamsToShape()
             obj->setProperty("root_note", (int)rootNoteSlider_.getValue());
             obj->setProperty("pitch_quantize", pitchQuantizeToggle_.getToggleState());
             obj->setProperty("glide_amount", glideSlider_.getValue());
+            obj->setProperty("pitchbend_range", (int)pbRangeSlider_.getValue());
             break;
         }
         case BehaviorType::XYController: {

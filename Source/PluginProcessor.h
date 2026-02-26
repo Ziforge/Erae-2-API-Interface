@@ -14,6 +14,7 @@
 #include "MIDI/CVOutput.h"
 #include "Effects/TouchEffectEngine.h"
 #include "Rendering/WidgetRenderer.h"
+#include "Core/GestureLooper.h"
 #include <map>
 
 namespace erae {
@@ -56,6 +57,7 @@ public:
     DawFeedback& getDawFeedback() { return dawFeedback_; }
     CVOutput& getCVOutput() { return cvOutput_; }
     TouchEffectEngine& getEffectEngine() { return effectEngine_; }
+    GestureLooper& getGestureLooper() { return gestureLooper_; }
 
     bool getPerFingerColors() const { return perFingerColors_; }
     void setPerFingerColors(bool en) { perFingerColors_ = en; }
@@ -75,6 +77,10 @@ public:
     // EraeConnection::Listener
     void fingerEvent(const FingerEvent& event) override;
     void connectionChanged(bool connected) override;
+    void pageChangeReceived(int pageIndex) override;
+    void transportReceived(bool start) override;
+
+    void injectReplayEvent(const FingerEvent& event);
 
     // Touch positions for UI overlay
     struct FingerInfo { float x, y, z; };
@@ -95,6 +101,8 @@ private:
     CVOutput cvOutput_;
     TouchEffectEngine effectEngine_;
     EraeRenderer renderer_;
+    GestureLooper gestureLooper_ { *this };
+    juce::SpinLock dispatchLock_;
 
     bool perFingerColors_ = false;
 

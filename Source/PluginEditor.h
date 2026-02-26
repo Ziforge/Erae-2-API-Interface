@@ -24,6 +24,7 @@ class EraeEditor : public juce::AudioProcessorEditor,
                    public SidebarTabBar::Listener,
                    public GridCanvas::Listener,
                    public SelectionManager::Listener,
+                   public MultiPageLayout::Listener,
                    public juce::Timer {
 public:
     explicit EraeEditor(EraeProcessor& processor);
@@ -54,6 +55,9 @@ public:
     void pasteRequested() override;
     void designModeChanged(bool active) override;
     void designFinished(std::set<std::pair<int,int>> cells) override;
+
+    // MultiPageLayout::Listener
+    void pageChanged(int pageIndex) override;
 
     // juce::Timer — refresh finger overlay + connection status
     void timerCallback() override;
@@ -89,6 +93,7 @@ private:
     juce::TextButton deleteButton_  {"Del"};
     juce::TextButton dupeButton_    {"Dupe"};
     juce::TextButton zoomFitButton_ {"Fit"};
+    juce::TextButton loopButton_    {"Loop"};
 
     // Settings tab — file section
     juce::ComboBox presetSelector_;
@@ -218,6 +223,7 @@ private:
     void updateStatus();
     void updateSelectionInfo();
     void updateConnectButton();
+    void updateLoopButton();
     void updateUndoButtons();
     void drawToolbarSeparators(juce::Graphics& g);
     void showAlignmentButtons(bool show);

@@ -454,6 +454,166 @@ std::vector<std::unique_ptr<Shape>> autoHarp(int gridW, int gridH)
 }
 
 // ============================================================
+// harmonic_table — hex isomorphic (Axis-49 / C-Thru / Linn)
+//   Horizontal = minor 3rd (+3), diagonal up-right = major 3rd (+4)
+// ============================================================
+std::vector<std::unique_ptr<Shape>> harmonicTable(int rows, int cols, int baseNote,
+                                                   int gridW, int gridH)
+{
+    int hexCellW = gridW / cols;
+    float hexR = hexCellW / 2.0f;
+    float rowH = (float)gridH / rows;
+
+    std::vector<std::unique_ptr<Shape>> shapes;
+    for (int r = 0; r < rows; ++r) {
+        float xOff = (r % 2) ? hexCellW / 2.0f : 0;
+        for (int c = 0; c < cols; ++c) {
+            int note = baseNote + r * 4 + c * 3;
+            if (note < 0 || note > 127) continue;
+            int pc = note % 12;
+            float cx = std::round(xOff + c * hexCellW + hexR);
+            float cy = std::round(r * rowH + rowH / 2.0f);
+            auto hex = std::make_unique<HexShape>(
+                "ht_" + std::to_string(r) + "_" + std::to_string(c),
+                cx, cy, hexR * 0.9f);
+            hex->color = hsvToRgb7((float)(pc * 30), 0.85f, 0.6f);
+            hex->colorActive = hsvToRgb7((float)(pc * 30), 0.85f, 1.0f);
+            hex->behavior = "note_pad";
+            hex->behaviorParams = noteParams(note);
+            hex->visualStyle = "pressure_glow";
+            shapes.push_back(std::move(hex));
+        }
+    }
+    return shapes;
+}
+
+// ============================================================
+// kaoss_pad — 4×4 grid of XY controller zones
+// ============================================================
+std::vector<std::unique_ptr<Shape>> kaossPad(int gridW, int gridH)
+{
+    int zCols = 4, zRows = 4;
+    int gap = 1;
+    int usableW = gridW - (zCols + 1) * gap;
+    int usableH = gridH - (zRows + 1) * gap;
+    int zoneW = usableW / zCols;
+    int zoneH = usableH / zRows;
+
+    std::vector<std::unique_ptr<Shape>> shapes;
+    for (int r = 0; r < zRows; ++r) {
+        for (int c = 0; c < zCols; ++c) {
+            int i = r * zCols + c;
+            int x = gap + c * (zoneW + gap);
+            int y = gap + r * (zoneH + gap);
+            float hue = i * (360.0f / 16);
+            auto s = makeRect(
+                "kaoss_" + std::to_string(i),
+                (float)x, (float)y, (float)zoneW, (float)zoneH,
+                hsvToRgb7(hue, 0.85f, 0.5f),
+                hsvToRgb7(hue, 0.85f, 1.0f),
+                "xy_controller", xyParams(1 + i * 2, 2 + i * 2));
+            s->visualStyle = "position_dot";
+            shapes.push_back(std::move(s));
+        }
+    }
+    return shapes;
+}
+
+// ============================================================
+// circle_of_fifths — 12 notes in fifths order around a ring
+//   7 diatonic notes (C major) = large/bright heptagon
+//   5 chromatic notes = small/dim
+//   Center = root drone
+// ============================================================
+std::vector<std::unique_ptr<Shape>> circleOfFifths(int gridW, int gridH)
+{
+    std::vector<std::unique_ptr<Shape>> shapes;
+
+    float ringCX = gridW / 2.0f;   // 21
+    float ringCY = gridH / 2.0f;   // 12
+    float ringR  = 8.5f;
+
+    // Fifths order: C G D A E B F# C# G# D# A# F
+    int fifths[] = {0, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10, 5};
+
+    const float pi = 3.14159265358979f;
+
+    for (int i = 0; i < 12; ++i) {
+        int pc = fifths[i];
+        int note = 60 + pc;  // octave 4
+        bool isDiatonic = (i <= 5 || i == 11);  // C,G,D,A,E,B,F
+        float radius = isDiatonic ? 1.8f : 1.1f;
+        float angle = (float)i * (2.0f * pi / 12.0f) - pi / 2.0f;  // start at 12 o'clock
+        float cx = ringCX + ringR * std::cos(angle);
+        float cy = ringCY + ringR * std::sin(angle);
+
+        float hue = (float)i * 30.0f;
+        float sat = isDiatonic ? 0.90f : 0.50f;
+        float val = isDiatonic ? 0.65f : 0.30f;
+
+        auto circ = std::make_unique<CircleShape>(
+            "cof_" + std::to_string(pc), cx, cy, radius);
+        circ->color = hsvToRgb7(hue, sat, val);
+        circ->colorActive = hsvToRgb7(hue, sat, 1.0f);
+        circ->behavior = "note_pad";
+        circ->behaviorParams = noteParams(note);
+        circ->visualStyle = "pressure_glow";
+        shapes.push_back(std::move(circ));
+    }
+
+    // Center drone — root C3
+    auto center = std::make_unique<CircleShape>("cof_center", ringCX, ringCY, 3.0f);
+    center->color = hsvToRgb7(0, 0.60f, 0.50f);
+    center->colorActive = hsvToRgb7(0, 0.60f, 1.0f);
+    center->behavior = "note_pad";
+    center->behaviorParams = noteParams(48);  // C3
+    center->visualStyle = "pressure_glow";
+    shapes.push_back(std::move(center));
+
+    return shapes;
+}
+
+// ============================================================
+// tonnetz — triangular lattice of harmonic relationships
+//   Horizontal = perfect fifths (+7), vertical = major thirds (+4)
+// ============================================================
+std::vector<std::unique_ptr<Shape>> tonnetz(int rows, int cols, int baseNote,
+                                             int gridW, int gridH)
+{
+    float colSpacing = 6.0f;
+    float rowSpacing = 4.0f;
+    float circR = 1.3f;
+
+    // Center the grid
+    float totalW = (cols - 1) * colSpacing + colSpacing / 2.0f;  // account for odd-row offset
+    float totalH = (rows - 1) * rowSpacing;
+    float startX = (gridW - totalW) / 2.0f + circR;
+    float startY = (gridH - totalH) / 2.0f;
+
+    std::vector<std::unique_ptr<Shape>> shapes;
+    for (int r = 0; r < rows; ++r) {
+        float xOff = (r % 2) ? 3.0f : 0;
+        for (int c = 0; c < cols; ++c) {
+            int note = baseNote + r * 4 + c * 7;
+            if (note < 0 || note > 127) continue;
+            int pc = note % 12;
+            float cx = startX + c * colSpacing + xOff;
+            float cy = startY + r * rowSpacing;
+            auto circ = std::make_unique<CircleShape>(
+                "tn_" + std::to_string(r) + "_" + std::to_string(c),
+                cx, cy, circR);
+            circ->color = hsvToRgb7((float)(pc * 30), 0.85f, 0.6f);
+            circ->colorActive = hsvToRgb7((float)(pc * 30), 0.85f, 1.0f);
+            circ->behavior = "note_pad";
+            circ->behaviorParams = noteParams(note);
+            circ->visualStyle = "pressure_glow";
+            shapes.push_back(std::move(circ));
+        }
+    }
+    return shapes;
+}
+
+// ============================================================
 // Generator registry
 // ============================================================
 const std::vector<GeneratorEntry>& getGenerators()
@@ -466,6 +626,10 @@ const std::vector<GeneratorEntry>& getGenerators()
         {"XY Pad",         [] { return xyPad(); }},
         {"Buchla Thunder", [] { return buchlaThunder(); }},
         {"Auto Harp",      [] { return autoHarp(); }},
+        {"Harmonic Table", [] { return harmonicTable(); }},
+        {"Kaoss Pad",      [] { return kaossPad(); }},
+        {"Circle of Fifths", [] { return circleOfFifths(); }},
+        {"Tonnetz",        [] { return tonnetz(); }},
     };
     return generators;
 }

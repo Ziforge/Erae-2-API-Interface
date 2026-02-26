@@ -70,6 +70,8 @@ private:
     juce::ToggleButton highresToggle_;
     juce::Label slideCCLabel_   {"", "Slide CC"};
     juce::Slider slideCCSlider_;
+    juce::Label pbRangeLabel_   {"", "PB Range"};
+    juce::Slider pbRangeSlider_;
 
     juce::TextButton midiLearnBtn_ {"Learn"};
 

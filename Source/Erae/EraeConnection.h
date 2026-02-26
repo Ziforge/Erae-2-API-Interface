@@ -19,6 +19,8 @@ public:
         virtual void zoneBoundaryReceived(int zoneId, int width, int height) {}
         virtual void apiVersionReceived(int version) {}
         virtual void connectionChanged(bool connected) {}
+        virtual void pageChangeReceived(int pageIndex) {}
+        virtual void transportReceived(bool start) {}
     };
 
     EraeConnection();

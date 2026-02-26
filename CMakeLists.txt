@@ -44,6 +44,8 @@ target_sources(EraeShapeEditor
         Source/Core/Clipboard.h
         Source/Core/ShapeLibrary.h
         Source/Core/ShapeMorph.h
+        Source/Core/GestureLooper.h
+        Source/Core/GestureLooper.cpp
         # Model
         Source/Model/Shape.h
         Source/Model/Layout.h

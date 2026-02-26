@@ -18,6 +18,7 @@ public:
 
     void setProcessor(EraeProcessor* p) { processor_ = p; }
 
+    void setLayout(Layout& newLayout);
     void requestFullRedraw();
 
     // Layout::Listener
@@ -30,7 +31,7 @@ private:
     void render();
     void renderShape(const Shape& shape, const WidgetState& state);
 
-    Layout& layout_;
+    Layout* layout_;
     EraeConnection& connection_;
     EraeProcessor* processor_ = nullptr;
     bool dirty_ = false;

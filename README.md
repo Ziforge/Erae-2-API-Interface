@@ -18,8 +18,9 @@ A JUCE-based visual layout editor and MIDI controller for the **Erae Touch II** 
 - **Musical Features** - Velocity curves (linear/exponential/logarithmic/S-curve), scale quantization (10 scales with glide), note latch, pressure curves, CC output ranges
 - **OSC Output** - Mirror all MIDI output as OSC messages over UDP for integration with TouchDesigner, Max/MSP, SuperCollider, etc.
 - **Per-Finger Colors** - Each finger gets a distinct color (10-color palette) on both the screen overlay and hardware surface
+- **Gesture Looper** - Record finger events and loop them back through the full pipeline (MIDI + visual effects). Toggle with the toolbar Loop button or Erae II hardware transport (Play=FA / Stop=FC). Red border on hardware surface during recording, green during playback
 - **DAW Feedback** - Incoming MIDI note-on/off from the DAW highlights the corresponding shapes with a pulsing glow, so pads light up during playback
-- **Preset Library** - Built-in presets (Drum Pads, Piano, Wicki-Hayden, Fader Bank, XY Pad, Buchla Thunder, Auto Harp) plus save/load of custom layouts as JSON
+- **Preset Library** - Built-in presets (Drum Pads, Piano, Wicki-Hayden, Fader Bank, XY Pad, Buchla Thunder, Auto Harp, Harmonic Table, Kaoss Pad, Circle of Fifths, Tonnetz) plus save/load of custom layouts as JSON
 - **Shape Library** - Save any shape to a persistent reusable library. Browse saved shapes, place them on the canvas, flip horizontally/vertically. Library persists across sessions as JSON
 - **CV Output** - Each shape can optionally output CV signals on audio channels (1V/oct pitch, gate, pressure, slide). Designed for bridging to modular synths via DC-coupled audio interfaces or FPGA USB audio (120-channel Zybo modular)
 - **Tabbed Sidebar** - Right sidebar organized into 4 tabs: **Shape** (color picker, visual style, alignment, morph), **MIDI** (behavior, note/CC, learn, curves, scales), **Output** (CV per-shape, OSC global), **Library** (browse, save, place, flip). Selection info stays visible at the bottom across all tabs
@@ -101,6 +102,23 @@ Effect state can be routed to any modulation target:
 - **OSC** - Effect value mirrored over UDP
 - **MPE XYZ** - Full 3-axis output: X = pitch bend, Y = CC74 slide, Z = pressure (3 CV channels for X/Y/Z)
 
+## Gesture Looper
+
+Record and loop touch gestures. The looper captures raw finger events with timestamps and replays them through the same processing pipeline, reproducing both MIDI output and visual effects without any frame capture.
+
+| State | Button | Hardware | Status Bar |
+|-------|--------|----------|------------|
+| **Idle** | "Loop" | — | — |
+| **Recording** | "REC" (red) | Red border | REC |
+| **Playing** | "PLAY" (green) | Green border | LOOP |
+
+- **Click Loop** (or press Play on Erae II) to start recording
+- **Click REC** (or press Play again) to stop recording and begin looping
+- **Click PLAY** (or press Stop on Erae II) to stop playback
+- Replayed finger IDs are remapped (bit 63 set) to avoid collision with live touches
+- At loop boundaries, all active replay fingers are cleaned up before restarting
+- Empty or very short recordings (<50ms) are discarded
+
 ## MIDI Behaviors
 
 - **Trigger** - Note on/off on touch down/up. Supports fixed or pressure-mapped velocity, configurable velocity curve, and latch mode (toggle on/off per press)
@@ -138,6 +156,10 @@ Effect state can be routed to any modulation target:
 | **XY Pad** | Full-surface XY controller with position-dot tracking |
 | **Buchla Thunder** | Recreation of the Buchla Thunder overlay (triggers, feathers, tail pads, hex palm pads) |
 | **Auto Harp** | Omnichord-style layout: 36 chord buttons (12 keys x Maj/Min/7th) on channels 0-2, plus 42 chromatic strum strings (C3-F6) on channel 3. Natural keys are brighter/wider, sharps are narrower/darker. Strum across the strings to trigger harp-like arpeggios |
+| **Harmonic Table** | Hex isomorphic layout (Axis-49/C-Thru/Linn style): horizontal = minor 3rds (+3), diagonal up-right = major 3rds (+4). Any 3 adjacent hexes form a triad. 10x6 grid, chromatic rainbow coloring |
+| **Kaoss Pad** | 4x4 grid of independent XY controller zones, each with its own CC pair. Rainbow coloring by zone, position-dot tracking |
+| **Circle of Fifths** | 12 notes arranged clockwise in fifths order (C,G,D,A,E,B,F#,C#,G#,D#,A#,F). 7 diatonic notes are large/bright (visible heptagon), 5 chromatic notes are small/dim. Center drone on C3 |
+| **Tonnetz** | Triangular lattice showing harmonic relationships: horizontal = perfect fifths (+7), vertical = major thirds (+4). Every triangle of 3 adjacent nodes forms a triad. 7x6 offset grid |
 
 ## Building
 

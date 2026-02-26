@@ -3,21 +3,32 @@
 #include "../Rendering/FingerPalette.h"
 #include "../Effects/EffectRenderer.h"
 #include "../Effects/TouchEffectEngine.h"
+#include "../Core/GestureLooper.h"
 #include <cstring>
 #include <algorithm>
 
 namespace erae {
 
 EraeRenderer::EraeRenderer(Layout& layout, EraeConnection& connection)
-    : layout_(layout), connection_(connection)
+    : layout_(&layout), connection_(connection)
 {
-    layout_.addListener(this);
+    layout_->addListener(this);
 }
 
 EraeRenderer::~EraeRenderer()
 {
     stopTimer();
-    layout_.removeListener(this);
+    layout_->removeListener(this);
+}
+
+void EraeRenderer::setLayout(Layout& newLayout)
+{
+    if (layout_ == &newLayout) return;
+    layout_->removeListener(this);
+    layout_ = &newLayout;
+    layout_->addListener(this);
+    lastWidgetStates_.clear();
+    requestFullRedraw();
 }
 
 void EraeRenderer::requestFullRedraw()
@@ -58,7 +69,7 @@ void EraeRenderer::timerCallback()
         std::memset(fb, 0, sizeof(fb));
 
         // Render each shape into the framebuffer (painter's algorithm: later shapes overwrite)
-        for (auto& shape : layout_.shapes()) {
+        for (auto& shape : layout_->shapes()) {
             auto it = widgetStates.find(shape->id);
             WidgetState state;
             if (it != widgetStates.end())
@@ -95,7 +106,7 @@ void EraeRenderer::timerCallback()
         // DAW feedback: brighten highlighted shape pixels on hardware
         if (processor_ && processor_->getDawFeedback().isEnabled()) {
             auto highlighted = processor_->getDawFeedback().getHighlightedShapes();
-            for (auto& shape : layout_.shapes()) {
+            for (auto& shape : layout_->shapes()) {
                 if (highlighted.count(shape->id)) {
                     auto pixels = shape->gridPixels();
                     for (auto& [px, py] : pixels) {
@@ -119,7 +130,7 @@ void EraeRenderer::timerCallback()
                 std::map<std::string, EffectParams> effectParams;
                 std::map<std::string, const Shape*> effectShapes;
                 for (auto& [sid, _] : effectStates) {
-                    auto* s = layout_.getShape(sid);
+                    auto* s = layout_->getShape(sid);
                     if (s) {
                         effectParams[sid] = TouchEffectEngine::parseParams(*s);
                         effectShapes[sid] = s;
@@ -157,6 +168,24 @@ void EraeRenderer::timerCallback()
                     }
                 }
                 ++fingerNum;
+            }
+        }
+
+        // Gesture looper border: red for recording, green for playing
+        if (processor_) {
+            auto loopState = processor_->getGestureLooper().getState();
+            if (loopState != GestureLooper::State::Idle) {
+                uint8_t br = 0, bg = 0, bb = 0;
+                if (loopState == GestureLooper::State::Recording) { br = 127; bg = 0; bb = 0; }
+                else { br = 0; bg = 100; bb = 0; }
+                for (int x = 0; x < W; ++x) {
+                    fb[0][x][0] = br; fb[0][x][1] = bg; fb[0][x][2] = bb;
+                    fb[H-1][x][0] = br; fb[H-1][x][1] = bg; fb[H-1][x][2] = bb;
+                }
+                for (int y = 1; y < H - 1; ++y) {
+                    fb[y][0][0] = br; fb[y][0][1] = bg; fb[y][0][2] = bb;
+                    fb[y][W-1][0] = br; fb[y][W-1][1] = bg; fb[y][W-1][2] = bb;
+                }
             }
         }
 

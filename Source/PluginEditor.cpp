@@ -17,6 +17,9 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     // Listen for selection changes
     selectionManager_.addListener(this);
 
+    // Listen for page changes (hardware buttons, processor-driven switches)
+    processor_.getMultiLayout().addListener(this);
+
     // Undo state change callback
     processor_.getUndoManager().onStateChanged = [this] {
         juce::MessageManager::callAsync([this] { updateUndoButtons(); });
@@ -120,6 +123,14 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     addAndMakeVisible(deleteButton_);
     addAndMakeVisible(dupeButton_);
     addAndMakeVisible(zoomFitButton_);
+
+    // --- Toolbar: loop button ---
+    loopButton_.setTooltip("Gesture Looper (record/play touch gestures)");
+    loopButton_.onClick = [this] {
+        processor_.getGestureLooper().toggleState();
+        updateLoopButton();
+    };
+    addAndMakeVisible(loopButton_);
 
     // --- Canvas ---
     canvas_.addListener(this);
@@ -360,6 +371,7 @@ EraeEditor::EraeEditor(EraeProcessor& p)
             ml.switchToPage(ml.currentPageIndex() - 1);
             canvas_.setLayout(ml.currentPage());
             selectionManager_.clear();
+            processor_.getRenderer().setLayout(ml.currentPage());
             processor_.getDawFeedback().updateFromLayout(ml.currentPage());
             updateStatus();
         }
@@ -370,6 +382,7 @@ EraeEditor::EraeEditor(EraeProcessor& p)
             ml.switchToPage(ml.currentPageIndex() + 1);
             canvas_.setLayout(ml.currentPage());
             selectionManager_.clear();
+            processor_.getRenderer().setLayout(ml.currentPage());
             processor_.getDawFeedback().updateFromLayout(ml.currentPage());
             updateStatus();
         }
@@ -380,6 +393,7 @@ EraeEditor::EraeEditor(EraeProcessor& p)
         ml.addPage();
         canvas_.setLayout(ml.currentPage());
         selectionManager_.clear();
+        processor_.getRenderer().setLayout(ml.currentPage());
         processor_.getDawFeedback().updateFromLayout(ml.currentPage());
         updateStatus();
     };
@@ -389,6 +403,7 @@ EraeEditor::EraeEditor(EraeProcessor& p)
             ml.removePage(ml.currentPageIndex());
             canvas_.setLayout(ml.currentPage());
             selectionManager_.clear();
+            processor_.getRenderer().setLayout(ml.currentPage());
             processor_.getDawFeedback().updateFromLayout(ml.currentPage());
             updateStatus();
         }
@@ -399,6 +414,7 @@ EraeEditor::EraeEditor(EraeProcessor& p)
         ml.duplicatePage(ml.currentPageIndex());
         canvas_.setLayout(ml.currentPage());
         selectionManager_.clear();
+        processor_.getRenderer().setLayout(ml.currentPage());
         processor_.getDawFeedback().updateFromLayout(ml.currentPage());
         updateStatus();
     };
@@ -611,6 +627,7 @@ EraeEditor::~EraeEditor()
     effectPanel_.removeListener(this);
     tabBar_.removeListener(this);
     selectionManager_.removeListener(this);
+    processor_.getMultiLayout().removeListener(this);
     setLookAndFeel(nullptr);
 }
 
@@ -755,7 +772,9 @@ void EraeEditor::resized()
     dupeButton_.setBounds(toolbar.removeFromLeft(btnW));
     toolbar.removeFromLeft(Theme::SpaceMD);
 
-    // Fit (right-aligned)
+    // Loop + Fit (right-aligned)
+    loopButton_.setBounds(toolbar.removeFromRight(btnW + 4));
+    toolbar.removeFromRight(Theme::SpaceSM);
     zoomFitButton_.setBounds(toolbar.removeFromRight(btnW - 8));
 
     // ===== Status bar =====
@@ -1601,6 +1620,12 @@ void EraeEditor::updateStatus()
     auto& conn = processor_.getConnection();
     juce::String connStr = conn.isConnected() ? "Connected" : "--";
 
+    auto loopState = processor_.getGestureLooper().getState();
+    if (loopState == GestureLooper::State::Recording)
+        connStr += "  |  REC";
+    else if (loopState == GestureLooper::State::Playing)
+        connStr += "  |  LOOP";
+
     auto& ml = processor_.getMultiLayout();
     juce::String pageStr = "Page " + juce::String(ml.currentPageIndex() + 1)
                          + "/" + juce::String(ml.numPages());
@@ -1626,6 +1651,28 @@ void EraeEditor::updateConnectButton()
                              connected ? Theme::Colors::Success.darker(0.4f) : Theme::Colors::ButtonBg);
     connectButton_.setColour(juce::TextButton::textColourOffId,
                              connected ? Theme::Colors::Success : Theme::Colors::Text);
+}
+
+void EraeEditor::updateLoopButton()
+{
+    auto state = processor_.getGestureLooper().getState();
+    switch (state) {
+        case GestureLooper::State::Idle:
+            loopButton_.setButtonText("Loop");
+            loopButton_.setColour(juce::TextButton::buttonColourId, Theme::Colors::ButtonBg);
+            loopButton_.setColour(juce::TextButton::textColourOffId, Theme::Colors::Text);
+            break;
+        case GestureLooper::State::Recording:
+            loopButton_.setButtonText("REC");
+            loopButton_.setColour(juce::TextButton::buttonColourId, Theme::Colors::Error.darker(0.3f));
+            loopButton_.setColour(juce::TextButton::textColourOffId, Theme::Colors::Error);
+            break;
+        case GestureLooper::State::Playing:
+            loopButton_.setButtonText("PLAY");
+            loopButton_.setColour(juce::TextButton::buttonColourId, Theme::Colors::Success.darker(0.4f));
+            loopButton_.setColour(juce::TextButton::textColourOffId, Theme::Colors::Success);
+            break;
+    }
 }
 
 // ============================================================
@@ -1676,6 +1723,17 @@ void EraeEditor::timerCallback()
     }
 
     updateConnectButton();
+    updateLoopButton();
+}
+
+void EraeEditor::pageChanged(int /*pageIndex*/)
+{
+    juce::MessageManager::callAsync([safeThis = juce::Component::SafePointer<EraeEditor>(this)] {
+        if (!safeThis) return;
+        safeThis->canvas_.setLayout(safeThis->processor_.getLayout());
+        safeThis->selectionManager_.clear();
+        safeThis->updateStatus();
+    });
 }
 
 } // namespace erae

@@ -26,6 +26,12 @@ namespace Preset {
     std::vector<std::unique_ptr<Shape>> xyPad(int gridW = 42, int gridH = 24);
     std::vector<std::unique_ptr<Shape>> buchlaThunder(int gridW = 42, int gridH = 24);
     std::vector<std::unique_ptr<Shape>> autoHarp(int gridW = 42, int gridH = 24);
+    std::vector<std::unique_ptr<Shape>> harmonicTable(int rows = 6, int cols = 10, int baseNote = 48,
+                                                       int gridW = 42, int gridH = 24);
+    std::vector<std::unique_ptr<Shape>> kaossPad(int gridW = 42, int gridH = 24);
+    std::vector<std::unique_ptr<Shape>> circleOfFifths(int gridW = 42, int gridH = 24);
+    std::vector<std::unique_ptr<Shape>> tonnetz(int rows = 6, int cols = 7, int baseNote = 48,
+                                                 int gridW = 42, int gridH = 24);
 
     // Generator registry
     using GeneratorFn = std::function<std::vector<std::unique_ptr<Shape>>()>;

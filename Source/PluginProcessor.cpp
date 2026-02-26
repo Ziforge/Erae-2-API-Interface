@@ -142,6 +142,9 @@ void EraeProcessor::fingerEvent(const FingerEvent& event)
         }
     }
 
+    // Capture for gesture looper (post-flip, pre-dispatch)
+    gestureLooper_.captureEvent(flipped);
+
     // Hit test: on DOWN capture shape, on MOVE re-test so sliding off clears
     Shape* shape = nullptr;
     if (flipped.action != SysEx::ACTION_UP) {
@@ -153,11 +156,12 @@ void EraeProcessor::fingerEvent(const FingerEvent& event)
             fingerShapeMap_.erase(flipped.fingerId);
     }
 
-    // Dispatch to behavior engine for MIDI generation
-    behaviorEngine_.handle(flipped, shape);
-
-    // Dispatch to effect engine for visual effects + modulation
-    effectEngine_.handleFinger(flipped, shape);
+    // Dispatch to behavior engine + effect engine (locked for thread safety with looper playback)
+    {
+        juce::SpinLock::ScopedLockType lock(dispatchLock_);
+        behaviorEngine_.handle(flipped, shape);
+        effectEngine_.handleFinger(flipped, shape);
+    }
 
     // Kick renderer for widget animation while fingers are active
     if (shape && visualStyleFromString(shape->visualStyle) != VisualStyle::Static)
@@ -169,6 +173,63 @@ void EraeProcessor::fingerEvent(const FingerEvent& event)
         if (ep.type != TouchEffectType::None)
             renderer_.requestFullRedraw();
     }
+}
+
+void EraeProcessor::transportReceived(bool start)
+{
+    if (start)
+        gestureLooper_.toggleState();
+    else
+        gestureLooper_.stop();
+}
+
+void EraeProcessor::injectReplayEvent(const FingerEvent& event)
+{
+    // Same as fingerEvent() but NO Y-flip (recorded post-flip), NO captureEvent (avoid re-recording)
+    {
+        juce::SpinLock::ScopedLockType lock(fingerLock_);
+        if (event.action == SysEx::ACTION_UP) {
+            activeFingers_.erase(event.fingerId);
+            fingerShapeMap_.erase(event.fingerId);
+        } else {
+            activeFingers_[event.fingerId] = {event.x, event.y, event.z};
+        }
+    }
+
+    Shape* shape = nullptr;
+    if (event.action != SysEx::ACTION_UP) {
+        shape = getLayout().hitTest(event.x, event.y);
+        juce::SpinLock::ScopedLockType lock(fingerLock_);
+        if (shape)
+            fingerShapeMap_[event.fingerId] = shape->id;
+        else
+            fingerShapeMap_.erase(event.fingerId);
+    }
+
+    {
+        juce::SpinLock::ScopedLockType lock(dispatchLock_);
+        behaviorEngine_.handle(event, shape);
+        effectEngine_.handleFinger(event, shape);
+    }
+
+    if (shape && visualStyleFromString(shape->visualStyle) != VisualStyle::Static)
+        renderer_.requestFullRedraw();
+
+    if (shape) {
+        auto ep = TouchEffectEngine::parseParams(*shape);
+        if (ep.type != TouchEffectType::None)
+            renderer_.requestFullRedraw();
+    }
+}
+
+void EraeProcessor::pageChangeReceived(int pageIndex)
+{
+    auto& ml = multiLayout_;
+    if (pageIndex < 0 || pageIndex >= ml.numPages()) return;
+    if (pageIndex == ml.currentPageIndex()) return;
+    ml.switchToPage(pageIndex);
+    renderer_.setLayout(ml.currentPage());
+    dawFeedback_.updateFromLayout(ml.currentPage());
 }
 
 void EraeProcessor::connectionChanged(bool connected)
