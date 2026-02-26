@@ -6,6 +6,12 @@
 
 namespace erae {
 
+// Normalize absolute grid coord to [0,1] within shape bbox
+static inline float normToBBox(float absCoord, float bbMin, float bbMax) {
+    float range = bbMax - bbMin;
+    return range > 0.0f ? std::clamp((absCoord - bbMin) / range, 0.0f, 1.0f) : 0.5f;
+}
+
 // ============================================================
 // Parse effect params from shape's behaviorParams["effect"]
 // ============================================================
@@ -598,10 +604,10 @@ void TouchEffectEngine::advanceFrame(float dt)
 
         switch (p.type) {
             case TouchEffectType::Trail:
-                updateTrail(st, p, dt);
+                updateTrail(st, p, bb, dt);
                 break;
             case TouchEffectType::Ripple:
-                updateRipple(st, p, dt);
+                updateRipple(st, p, bb, dt);
                 break;
             case TouchEffectType::Particles: {
                 // Emit particles while touched
@@ -625,22 +631,22 @@ void TouchEffectEngine::advanceFrame(float dt)
                 break;
             }
             case TouchEffectType::Pulse:
-                updatePulse(st, p, dt);
+                updatePulse(st, p, bb, dt);
                 break;
             case TouchEffectType::Breathe:
-                updateBreathe(st, p, dt);
+                updateBreathe(st, p, bb, dt);
                 break;
             case TouchEffectType::Spin:
-                updateSpin(st, p, dt);
+                updateSpin(st, p, bb, dt);
                 break;
             case TouchEffectType::Orbit:
-                updateOrbit(st, p, dt);
+                updateOrbit(st, p, bb, dt);
                 break;
             case TouchEffectType::Boundary:
-                updateBoundary(st, p, dt);
+                updateBoundary(st, p, bb, dt);
                 break;
             case TouchEffectType::String:
-                updateString(st, p, dt);
+                updateString(st, p, bb, dt);
                 break;
             case TouchEffectType::Membrane:
                 updateMembrane(st, p, dt);
@@ -652,7 +658,7 @@ void TouchEffectEngine::advanceFrame(float dt)
                 updateSpringLattice(st, p, dt);
                 break;
             case TouchEffectType::Pendulum:
-                updatePendulum(st, p, dt);
+                updatePendulum(st, p, bb, dt);
                 break;
             case TouchEffectType::Collision:
                 updateCollision(st, p, bb, dt);
@@ -664,44 +670,16 @@ void TouchEffectEngine::advanceFrame(float dt)
                 updateGravityWell(st, p, bb, dt);
                 break;
             case TouchEffectType::ElasticBand:
-                updateElasticBand(st, p, dt);
+                updateElasticBand(st, p, bb, dt);
                 break;
             case TouchEffectType::Bow:
-                updateBow(st, p, dt);
+                updateBow(st, p, bb, dt);
                 break;
             case TouchEffectType::WaveInterference:
                 updateWaveInterference(st, p, dt);
                 break;
             default:
                 break;
-        }
-
-        // Re-normalize modX/modY from absolute grid coords to shape-local [0,1]
-        // (grid-field effects — Membrane, Fluid, SpringLattice, WaveInterference —
-        //  already normalize to their field dims, so skip those)
-        if (p.type != TouchEffectType::Membrane && p.type != TouchEffectType::Fluid &&
-            p.type != TouchEffectType::SpringLattice && p.type != TouchEffectType::WaveInterference &&
-            p.type != TouchEffectType::Tombolo) {
-            float bw = bb.xMax - bb.xMin;
-            float bh = bb.yMax - bb.yMin;
-            // modX/modY were set as absolute_coord / 42 (or similar) — convert to shape-local
-            // We know prevX is absolute grid, so re-derive from prevX/prevY when available
-            if (st.prevX >= 0.0f && bw > 0 && bh > 0) {
-                // For effects that set modX/Y from prevX/prevY or similar absolute coords,
-                // just re-clamp to shape bbox. The individual update functions already set
-                // modX/Y from absolute coords; we override with proper normalization.
-            }
-            // Already fixed in updateParticles, updateGravityWell, updateCollision;
-            // fix remaining by converting from the 0-1 range (normalized to 42/24)
-            // back to absolute, then to shape-local
-            if (p.type != TouchEffectType::Particles &&
-                p.type != TouchEffectType::GravityWell &&
-                p.type != TouchEffectType::Collision) {
-                float absX = st.modX * 42.0f;  // undo old normalization
-                float absY = st.modY * 24.0f;
-                st.modX = bw > 0 ? std::clamp((absX - bb.xMin) / bw, 0.0f, 1.0f) : 0.5f;
-                st.modY = bh > 0 ? std::clamp((absY - bb.yMin) / bh, 0.0f, 1.0f) : 0.5f;
-            }
         }
 
         // Send modulation
@@ -723,7 +701,7 @@ void TouchEffectEngine::advanceFrame(float dt)
 // Per-type update methods
 // ============================================================
 
-void TouchEffectEngine::updateTrail(ShapeEffectState& st, const EffectParams& p, float dt)
+void TouchEffectEngine::updateTrail(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt)
 {
     for (auto& pt : st.trail)
         pt.age += dt * p.decay;
@@ -739,13 +717,13 @@ void TouchEffectEngine::updateTrail(ShapeEffectState& st, const EffectParams& p,
     // MPE XYZ: latest trail point position → X/Y, trail density → Z
     if (!st.trail.empty()) {
         auto& latest = st.trail.back();
-        st.modX = std::max(0.0f, std::min(1.0f, latest.x / 42.0f));
-        st.modY = std::max(0.0f, std::min(1.0f, latest.y / 24.0f));
+        st.modX = normToBBox(latest.x, bb.xMin, bb.xMax);
+        st.modY = normToBBox(latest.y, bb.yMin, bb.yMax);
         st.modZ = st.modValue;
     }
 }
 
-void TouchEffectEngine::updateRipple(ShapeEffectState& st, const EffectParams& p, float dt)
+void TouchEffectEngine::updateRipple(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt)
 {
     float maxBrightness = 0.0f;
     for (auto& rip : st.ripples) {
@@ -766,9 +744,9 @@ void TouchEffectEngine::updateRipple(ShapeEffectState& st, const EffectParams& p
 
     // MPE XYZ: brightest ripple center → X/Y, brightness → Z
     if (!st.ripples.empty()) {
-        auto& rip = st.ripples.front(); // most recent active ripple
-        st.modX = std::max(0.0f, std::min(1.0f, rip.cx / 42.0f));
-        st.modY = std::max(0.0f, std::min(1.0f, rip.cy / 24.0f));
+        auto& rip = st.ripples.front();
+        st.modX = normToBBox(rip.cx, bb.xMin, bb.xMax);
+        st.modY = normToBBox(rip.cy, bb.yMin, bb.yMax);
         st.modZ = st.modValue;
     }
 }
@@ -811,15 +789,15 @@ void TouchEffectEngine::updateParticles(ShapeEffectState& st, const EffectParams
     }
 }
 
-void TouchEffectEngine::updatePulse(ShapeEffectState& st, const EffectParams& p, float dt)
+void TouchEffectEngine::updatePulse(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt)
 {
     if (st.touched) {
         st.phase += dt * p.speed * 4.0f;
         st.modValue = 0.5f + 0.5f * std::sin(st.phase * 6.2832f);
         // MPE XYZ: finger position → X/Y, oscillation → Z
         if (st.prevX >= 0.0f) {
-            st.modX = std::max(0.0f, std::min(1.0f, st.prevX / 42.0f));
-            st.modY = std::max(0.0f, std::min(1.0f, st.prevY / 24.0f));
+            st.modX = normToBBox(st.prevX, bb.xMin, bb.xMax);
+            st.modY = normToBBox(st.prevY, bb.yMin, bb.yMax);
         }
         st.modZ = st.modValue;
     } else {
@@ -833,15 +811,15 @@ void TouchEffectEngine::updatePulse(ShapeEffectState& st, const EffectParams& p,
     }
 }
 
-void TouchEffectEngine::updateBreathe(ShapeEffectState& st, const EffectParams& p, float dt)
+void TouchEffectEngine::updateBreathe(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt)
 {
     if (st.touched) {
         st.phase += dt * p.speed;
         st.modValue = 0.5f + 0.5f * std::sin(st.phase * 6.2832f);
         // MPE XYZ: finger position → X/Y, oscillation → Z
         if (st.prevX >= 0.0f) {
-            st.modX = std::max(0.0f, std::min(1.0f, st.prevX / 42.0f));
-            st.modY = std::max(0.0f, std::min(1.0f, st.prevY / 24.0f));
+            st.modX = normToBBox(st.prevX, bb.xMin, bb.xMax);
+            st.modY = normToBBox(st.prevY, bb.yMin, bb.yMax);
         }
         st.modZ = st.modValue;
     } else {
@@ -854,7 +832,7 @@ void TouchEffectEngine::updateBreathe(ShapeEffectState& st, const EffectParams& 
     }
 }
 
-void TouchEffectEngine::updateSpin(ShapeEffectState& st, const EffectParams& p, float dt)
+void TouchEffectEngine::updateSpin(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt)
 {
     // Spin dots orbit around the finger position (or shape center when released)
     float spinSpeed = p.speed * 3.0f; // radians/sec
@@ -878,8 +856,8 @@ void TouchEffectEngine::updateSpin(ShapeEffectState& st, const EffectParams& p, 
         if (!st.spinDots.empty() && st.prevX >= 0.0f) {
             float dotX = st.prevX + std::cos(st.spinDots[0].angle) * st.spinDots[0].radius;
             float dotY = st.prevY + std::sin(st.spinDots[0].angle) * st.spinDots[0].radius;
-            st.modX = std::max(0.0f, std::min(1.0f, dotX / 42.0f));
-            st.modY = std::max(0.0f, std::min(1.0f, dotY / 24.0f));
+            st.modX = normToBBox(dotX, bb.xMin, bb.xMax);
+            st.modY = normToBBox(dotY, bb.yMin, bb.yMax);
         }
         st.modZ = st.modValue;
     } else {
@@ -897,7 +875,7 @@ void TouchEffectEngine::updateSpin(ShapeEffectState& st, const EffectParams& p, 
     }
 }
 
-void TouchEffectEngine::updateOrbit(ShapeEffectState& st, const EffectParams& p, float dt)
+void TouchEffectEngine::updateOrbit(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt)
 {
     if (!st.orbit.hasPivot) {
         // No pivot — fade out
@@ -941,13 +919,13 @@ void TouchEffectEngine::updateOrbit(ShapeEffectState& st, const EffectParams& p,
         }
         cx /= (float)st.orbitDots.size();
         cy /= (float)st.orbitDots.size();
-        st.modX = std::max(0.0f, std::min(1.0f, cx / 42.0f));
-        st.modY = std::max(0.0f, std::min(1.0f, cy / 24.0f));
+        st.modX = normToBBox(cx, bb.xMin, bb.xMax);
+        st.modY = normToBBox(cy, bb.yMin, bb.yMax);
     }
     st.modZ = st.modValue;
 }
 
-void TouchEffectEngine::updateBoundary(ShapeEffectState& st, const EffectParams& p, float /*dt*/)
+void TouchEffectEngine::updateBoundary(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float /*dt*/)
 {
     if (st.boundaryFingers.size() < 2) {
         st.convexHull.clear();
@@ -977,8 +955,8 @@ void TouchEffectEngine::updateBoundary(ShapeEffectState& st, const EffectParams&
         for (auto& pt : st.convexHull) { cx += pt.first; cy += pt.second; }
         cx /= (float)st.convexHull.size();
         cy /= (float)st.convexHull.size();
-        st.modX = std::max(0.0f, std::min(1.0f, cx / 42.0f));
-        st.modY = std::max(0.0f, std::min(1.0f, cy / 24.0f));
+        st.modX = normToBBox(cx, bb.xMin, bb.xMax);
+        st.modY = normToBBox(cy, bb.yMin, bb.yMax);
         st.modZ = st.modValue;
     } else {
         st.modValue = 0.0f;
@@ -1116,7 +1094,7 @@ void TouchEffectEngine::initGridForShape(GridField& gf, const BBox& bb)
 // Physical model update methods (11 new types)
 // ============================================================
 
-void TouchEffectEngine::updateString(ShapeEffectState& st, const EffectParams& p, float dt)
+void TouchEffectEngine::updateString(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt)
 {
     auto& ss = st.stringState;
     int N = (int)ss.displacement.size();
@@ -1151,8 +1129,8 @@ void TouchEffectEngine::updateString(ShapeEffectState& st, const EffectParams& p
     st.modValue = std::min(1.0f, energy * 0.5f) * p.intensity;
     if (ss.hasA && ss.hasB) {
         float mx = (ss.ax + ss.bx) * 0.5f, my = (ss.ay + ss.by) * 0.5f;
-        st.modX = std::max(0.0f, std::min(1.0f, mx / 42.0f));
-        st.modY = std::max(0.0f, std::min(1.0f, (my + ss.displacement[midIdx]) / 24.0f));
+        st.modX = normToBBox(mx, bb.xMin, bb.xMax);
+        st.modY = normToBBox(my + ss.displacement[midIdx], bb.yMin, bb.yMax);
     }
     st.modZ = std::min(1.0f, energy * 0.3f);
 }
@@ -1299,7 +1277,7 @@ void TouchEffectEngine::updateSpringLattice(ShapeEffectState& st, const EffectPa
     st.modZ = st.modValue;
 }
 
-void TouchEffectEngine::updatePendulum(ShapeEffectState& st, const EffectParams& p, float dt)
+void TouchEffectEngine::updatePendulum(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt)
 {
     auto& ps = st.pendulumState;
     float g = 9.81f * p.speed;
@@ -1339,8 +1317,8 @@ void TouchEffectEngine::updatePendulum(ShapeEffectState& st, const EffectParams&
     while (ps.bobTrail.size() > 40) ps.bobTrail.erase(ps.bobTrail.begin());
 
     st.modValue = std::min(1.0f, std::abs(ps.omega1) * 0.3f) * p.intensity;
-    st.modX = std::max(0.0f, std::min(1.0f, finalX / 42.0f));
-    st.modY = std::max(0.0f, std::min(1.0f, finalY / 24.0f));
+    st.modX = normToBBox(finalX, bb.xMin, bb.xMax);
+    st.modY = normToBBox(finalY, bb.yMin, bb.yMax);
     st.modZ = std::min(1.0f, std::abs(ps.omega1) * 0.2f);
 }
 
@@ -1500,7 +1478,7 @@ void TouchEffectEngine::updateGravityWell(ShapeEffectState& st, const EffectPara
     st.modZ = std::min(1.0f, energy * 0.01f / std::max(1.0f, (float)gs.particles.size()));
 }
 
-void TouchEffectEngine::updateElasticBand(ShapeEffectState& st, const EffectParams& p, float dt)
+void TouchEffectEngine::updateElasticBand(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt)
 {
     auto& es = st.elasticState;
     int N = (int)es.points.size();
@@ -1551,12 +1529,12 @@ void TouchEffectEngine::updateElasticBand(ShapeEffectState& st, const EffectPara
         tension += std::abs(dist - restLen);
     }
     st.modValue = std::min(1.0f, tension * 0.05f) * p.intensity;
-    st.modX = std::max(0.0f, std::min(1.0f, es.points[mid].x / 42.0f));
-    st.modY = std::max(0.0f, std::min(1.0f, es.points[mid].y / 24.0f));
+    st.modX = normToBBox(es.points[mid].x, bb.xMin, bb.xMax);
+    st.modY = normToBBox(es.points[mid].y, bb.yMin, bb.yMax);
     st.modZ = st.modValue;
 }
 
-void TouchEffectEngine::updateBow(ShapeEffectState& st, const EffectParams& p, float dt)
+void TouchEffectEngine::updateBow(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt)
 {
     auto& bs = st.bowState;
     if (!bs.bowing) {
@@ -1596,8 +1574,8 @@ void TouchEffectEngine::updateBow(ShapeEffectState& st, const EffectParams& p, f
     while (bs.waveform.size() > 20) bs.waveform.erase(bs.waveform.begin());
 
     st.modValue = std::min(1.0f, bowSpeed * 0.1f) * p.intensity;
-    st.modX = std::max(0.0f, std::min(1.0f, bs.bowX / 42.0f));
-    st.modY = std::max(0.0f, std::min(1.0f, bs.bowY / 24.0f));
+    st.modX = normToBBox(bs.bowX, bb.xMin, bb.xMax);
+    st.modY = normToBBox(bs.bowY, bb.yMin, bb.yMax);
     st.modZ = std::min(1.0f, std::abs(bs.frictionForce) * 0.01f);
 }
 

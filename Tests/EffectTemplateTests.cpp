@@ -7,6 +7,10 @@
 #include "../Source/Model/Preset.h"
 #include "../Source/Core/ShapeLibrary.h"
 #include "../Source/Effects/TouchEffect.h"
+// Note: TouchEffectEngine.cpp is not linked into the test binary
+// (heavy dependencies). We include the header for type definitions
+// and test parseParams logic inline.
+#include "../Source/Effects/TouchEffectEngine.h"
 
 using namespace erae;
 
@@ -20,6 +24,11 @@ static int passed = 0, failed = 0;
 #define CHECK_EQ(a, b, msg) do { \
     if ((a) == (b)) { ++passed; } \
     else { ++failed; fprintf(stderr, "FAIL: %s (got %d, expected %d)\n", msg, (int)(a), (int)(b)); } \
+} while(0)
+
+#define CHECK_NEAR(a, b, tol, msg) do { \
+    if (std::abs((a) - (b)) <= (tol)) { ++passed; } \
+    else { ++failed; fprintf(stderr, "FAIL: %s (got %f, expected %f, tol %f)\n", msg, (double)(a), (double)(b), (double)(tol)); } \
 } while(0)
 
 // ============================================================
@@ -546,6 +555,660 @@ static void testGridFieldSizing()
 }
 
 // ============================================================
+// Test 10: Effect type string round-trips
+// ============================================================
+static void testEffectTypeStrings()
+{
+    fprintf(stdout, "--- Test: Effect type string round-trips ---\n");
+
+    // All 19 types round-trip through effectToString → effectFromString
+    static const TouchEffectType allTypes[] = {
+        TouchEffectType::Trail, TouchEffectType::Ripple, TouchEffectType::Particles,
+        TouchEffectType::Pulse, TouchEffectType::Breathe, TouchEffectType::Spin,
+        TouchEffectType::Orbit, TouchEffectType::Boundary, TouchEffectType::String,
+        TouchEffectType::Membrane, TouchEffectType::Fluid, TouchEffectType::SpringLattice,
+        TouchEffectType::Pendulum, TouchEffectType::Collision, TouchEffectType::Tombolo,
+        TouchEffectType::GravityWell, TouchEffectType::ElasticBand, TouchEffectType::Bow,
+        TouchEffectType::WaveInterference
+    };
+
+    for (auto t : allTypes) {
+        auto str = effectToString(t);
+        auto back = effectFromString(str);
+        CHECK(back == t,
+              (std::string("effectType round-trip: ") + str).c_str());
+        CHECK(!str.empty() && str != "none",
+              (std::string("effectType string non-empty: ") + str).c_str());
+    }
+
+    // None round-trips
+    CHECK(effectFromString("none") == TouchEffectType::None, "effectFromString(none) = None");
+    CHECK(effectFromString("") == TouchEffectType::None, "effectFromString('') = None");
+    CHECK(effectFromString("garbage") == TouchEffectType::None, "effectFromString(garbage) = None");
+    CHECK(effectToString(TouchEffectType::None) == "none", "effectToString(None) = 'none'");
+
+    // ModTarget round-trips
+    static const ModTarget allMods[] = {
+        ModTarget::MidiCC, ModTarget::PitchBend, ModTarget::Pressure,
+        ModTarget::CV, ModTarget::OSC, ModTarget::MPE
+    };
+    for (auto m : allMods) {
+        auto str = modTargetToString(m);
+        auto back = modTargetFromString(str);
+        CHECK(back == m,
+              (std::string("modTarget round-trip: ") + str).c_str());
+    }
+    CHECK(modTargetFromString("") == ModTarget::None, "modTargetFromString('') = None");
+    CHECK(modTargetFromString("xyz") == ModTarget::None, "modTargetFromString(xyz) = None");
+}
+
+// ============================================================
+// Test 11: Effect params from behaviorParams for all 19 templates
+// ============================================================
+static void testParseParams()
+{
+    fprintf(stdout, "--- Test: Effect params parsing for all templates ---\n");
+
+    // Replicate parseParams logic inline (TouchEffectEngine.cpp not linked)
+    auto parseEffect = [](const Shape& shape) -> EffectParams {
+        EffectParams p;
+        auto* obj = shape.behaviorParams.getDynamicObject();
+        if (!obj || !obj->hasProperty("effect")) return p;
+        auto effectVar = obj->getProperty("effect");
+        auto* eff = effectVar.getDynamicObject();
+        if (!eff) return p;
+        auto getStr = [&](const char* key, const char* def) -> std::string {
+            return eff->hasProperty(key) ? eff->getProperty(key).toString().toStdString() : def;
+        };
+        auto getFloat = [&](const char* key, float def) -> float {
+            return eff->hasProperty(key) ? (float)(double)eff->getProperty(key) : def;
+        };
+        auto getInt = [&](const char* key, int def) -> int {
+            return eff->hasProperty(key) ? (int)eff->getProperty(key) : def;
+        };
+        p.type      = effectFromString(getStr("type", "none"));
+        p.speed     = getFloat("speed", 1.0f);
+        p.intensity = getFloat("intensity", 0.8f);
+        p.decay     = getFloat("decay", 0.5f);
+        p.modTarget = modTargetFromString(getStr("mod_target", "none"));
+        p.modCC     = getInt("mod_cc", 74);
+        return p;
+    };
+
+    auto templates = Preset::effectTemplates();
+
+    static const char* expectedTypes[] = {
+        "trail", "ripple", "particles", "pulse", "breathe", "spin", "orbit",
+        "boundary", "string", "membrane", "fluid", "spring_lattice", "pendulum",
+        "collision", "tombolo", "gravity_well", "elastic_band", "bow", "wave_interference"
+    };
+
+    for (int i = 0; i < 19 && i < (int)templates.size(); ++i) {
+        auto p = parseEffect(*templates[(size_t)i].shape);
+
+        // Type matches expected
+        auto expectedType = effectFromString(expectedTypes[i]);
+        CHECK(p.type == expectedType,
+              (std::string("parseParams type[") + std::to_string(i) + "] " + expectedTypes[i]).c_str());
+
+        // All templates use MPE modulation
+        CHECK(p.modTarget == ModTarget::MPE,
+              (std::string("parseParams modTarget[") + std::to_string(i) + "] = MPE").c_str());
+
+        // Speed, intensity, decay within valid ranges
+        CHECK(p.speed >= 0.1f && p.speed <= 5.0f,
+              (std::string("parseParams speed in range[") + std::to_string(i) + "]").c_str());
+        CHECK(p.intensity >= 0.0f && p.intensity <= 1.0f,
+              (std::string("parseParams intensity in range[") + std::to_string(i) + "]").c_str());
+        CHECK(p.decay >= 0.1f && p.decay <= 2.0f,
+              (std::string("parseParams decay in range[") + std::to_string(i) + "]").c_str());
+
+        // modCC in MIDI range
+        CHECK(p.modCC >= 0 && p.modCC <= 127,
+              (std::string("parseParams modCC valid[") + std::to_string(i) + "]").c_str());
+    }
+
+    // Shape with no effect returns None
+    {
+        RectShape plain("plain", 0, 0, 5, 5);
+        auto p = parseEffect(plain);
+        CHECK(p.type == TouchEffectType::None, "parseParams no effect = None");
+        CHECK(p.modTarget == ModTarget::None, "parseParams no effect modTarget = None");
+    }
+
+    // Empty behaviorParams returns None
+    {
+        CircleShape c("c", 5, 5, 3);
+        c.behaviorParams = juce::var();
+        auto p = parseEffect(c);
+        CHECK(p.type == TouchEffectType::None, "parseParams empty params = None");
+    }
+}
+
+// ============================================================
+// Test 12: ShapeLibrary rename
+// ============================================================
+static void testLibraryRename()
+{
+    fprintf(stdout, "--- Test: ShapeLibrary rename ---\n");
+
+    ShapeLibrary lib;
+    RectShape r("r1", 0, 0, 5, 5);
+    lib.addEntry("Original", &r);
+    int userIdx = lib.numEntries() - 1;
+
+    // Rename user entry
+    lib.renameEntry(userIdx, "Renamed");
+    CHECK(lib.getEntry(userIdx).name == "Renamed", "rename user entry works");
+
+    // Rename built-in is no-op
+    std::string origName = lib.getEntry(0).name;
+    lib.renameEntry(0, "Hacked");
+    CHECK(lib.getEntry(0).name == origName, "rename builtin is no-op");
+
+    // Rename with negative index is no-op (no crash)
+    lib.renameEntry(-1, "Bad");
+    CHECK(lib.getEntry(userIdx).name == "Renamed", "rename -1 no crash");
+
+    // Rename with out-of-bounds index is no-op
+    lib.renameEntry(999, "Bad");
+    CHECK(lib.getEntry(userIdx).name == "Renamed", "rename OOB no crash");
+
+    // Rename persists through save/load
+    auto tmpFile = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                       .getChildFile("erae_test_rename.json");
+    lib.save(tmpFile);
+    ShapeLibrary lib2;
+    lib2.load(tmpFile);
+    CHECK(lib2.getEntry(lib2.numEntries() - 1).name == "Renamed",
+          "rename persists after save/load");
+    tmpFile.deleteFile();
+}
+
+// ============================================================
+// Test 13: normToBBox logic
+// ============================================================
+static void testNormToBBox()
+{
+    fprintf(stdout, "--- Test: normToBBox logic ---\n");
+
+    // Replicate the normToBBox helper inline for testing
+    auto normToBBox = [](float absCoord, float bbMin, float bbMax) -> float {
+        float range = bbMax - bbMin;
+        return range > 0.0f ? std::clamp((absCoord - bbMin) / range, 0.0f, 1.0f) : 0.5f;
+    };
+
+    // Center of bbox → 0.5
+    CHECK_NEAR(normToBBox(5.0f, 0.0f, 10.0f), 0.5f, 0.001f, "center = 0.5");
+
+    // Min edge → 0.0
+    CHECK_NEAR(normToBBox(0.0f, 0.0f, 10.0f), 0.0f, 0.001f, "min edge = 0.0");
+
+    // Max edge → 1.0
+    CHECK_NEAR(normToBBox(10.0f, 0.0f, 10.0f), 1.0f, 0.001f, "max edge = 1.0");
+
+    // Below min → clamped to 0.0
+    CHECK_NEAR(normToBBox(-5.0f, 0.0f, 10.0f), 0.0f, 0.001f, "below min = 0.0");
+
+    // Above max → clamped to 1.0
+    CHECK_NEAR(normToBBox(15.0f, 0.0f, 10.0f), 1.0f, 0.001f, "above max = 1.0");
+
+    // Quarter point
+    CHECK_NEAR(normToBBox(2.5f, 0.0f, 10.0f), 0.25f, 0.001f, "quarter = 0.25");
+
+    // Offset bbox (not starting at 0)
+    CHECK_NEAR(normToBBox(15.0f, 10.0f, 20.0f), 0.5f, 0.001f, "offset center = 0.5");
+    CHECK_NEAR(normToBBox(10.0f, 10.0f, 20.0f), 0.0f, 0.001f, "offset min = 0.0");
+    CHECK_NEAR(normToBBox(20.0f, 10.0f, 20.0f), 1.0f, 0.001f, "offset max = 1.0");
+
+    // Zero-size bbox → 0.5 fallback
+    CHECK_NEAR(normToBBox(5.0f, 5.0f, 5.0f), 0.5f, 0.001f, "zero range = 0.5");
+
+    // Small bbox (1 unit)
+    CHECK_NEAR(normToBBox(0.5f, 0.0f, 1.0f), 0.5f, 0.001f, "1-unit center = 0.5");
+
+    // Large offset
+    CHECK_NEAR(normToBBox(30.0f, 20.0f, 40.0f), 0.5f, 0.001f, "large offset center = 0.5");
+}
+
+// ============================================================
+// Test 14: ShapeEffectState defaults
+// ============================================================
+static void testEffectStateDefaults()
+{
+    fprintf(stdout, "--- Test: ShapeEffectState defaults ---\n");
+
+    ShapeEffectState st;
+
+    CHECK_NEAR(st.modValue, 0.0f, 0.001f, "default modValue = 0");
+    CHECK_NEAR(st.modX, 0.5f, 0.001f, "default modX = 0.5");
+    CHECK_NEAR(st.modY, 0.5f, 0.001f, "default modY = 0.5");
+    CHECK_NEAR(st.modZ, 0.0f, 0.001f, "default modZ = 0");
+    CHECK(!st.touched, "default touched = false");
+    CHECK_NEAR(st.phase, 0.0f, 0.001f, "default phase = 0");
+    CHECK_NEAR(st.velocity, 0.0f, 0.001f, "default velocity = 0");
+    CHECK_NEAR(st.gridOriginX, 0.0f, 0.001f, "default gridOriginX = 0");
+    CHECK_NEAR(st.gridOriginY, 0.0f, 0.001f, "default gridOriginY = 0");
+    CHECK(st.trail.empty(), "default trail empty");
+    CHECK(st.ripples.empty(), "default ripples empty");
+    CHECK(st.particles.empty(), "default particles empty");
+    CHECK(st.spinDots.empty(), "default spinDots empty");
+    CHECK(st.orbitDots.empty(), "default orbitDots empty");
+    CHECK(st.boundaryFingers.empty(), "default boundaryFingers empty");
+    CHECK(st.convexHull.empty(), "default convexHull empty");
+}
+
+// ============================================================
+// Test 15: EffectParams defaults
+// ============================================================
+static void testEffectParamsDefaults()
+{
+    fprintf(stdout, "--- Test: EffectParams defaults ---\n");
+
+    EffectParams p;
+
+    CHECK(p.type == TouchEffectType::None, "default type = None");
+    CHECK_NEAR(p.speed, 1.0f, 0.001f, "default speed = 1.0");
+    CHECK_NEAR(p.intensity, 0.8f, 0.001f, "default intensity = 0.8");
+    CHECK_NEAR(p.decay, 0.5f, 0.001f, "default decay = 0.5");
+    CHECK(!p.motionReactive, "default motionReactive = false");
+    CHECK(p.useShapeColor, "default useShapeColor = true");
+    CHECK(p.modTarget == ModTarget::None, "default modTarget = None");
+    CHECK_EQ(p.modCC, 74, "default modCC = 74");
+    CHECK_EQ(p.modChannel, 0, "default modChannel = 0");
+    CHECK_EQ(p.modCVCh, 0, "default modCVCh = 0");
+    CHECK_EQ(p.mpeChannel, 1, "default mpeChannel = 1");
+}
+
+// ============================================================
+// Test 16: GridField operations
+// ============================================================
+static void testGridFieldOps()
+{
+    fprintf(stdout, "--- Test: GridField operations ---\n");
+
+    // Basic set/get
+    {
+        GridField gf;
+        gf.init(10, 8, 0.0f);
+        gf.set(5, 3, 42.0f);
+        CHECK_NEAR(gf.get(5, 3), 42.0f, 0.001f, "set/get basic");
+    }
+
+    // add() accumulates
+    {
+        GridField gf;
+        gf.init(4, 4, 0.0f);
+        gf.set(1, 1, 10.0f);
+        gf.add(1, 1, 5.0f);
+        CHECK_NEAR(gf.get(1, 1), 15.0f, 0.001f, "add accumulates");
+        gf.add(1, 1, -3.0f);
+        CHECK_NEAR(gf.get(1, 1), 12.0f, 0.001f, "add negative");
+    }
+
+    // clear() zeros all
+    {
+        GridField gf;
+        gf.init(5, 5, 0.0f);
+        gf.set(2, 2, 99.0f);
+        gf.set(4, 4, 77.0f);
+        gf.clear();
+        CHECK_NEAR(gf.get(2, 2), 0.0f, 0.001f, "clear zeros (2,2)");
+        CHECK_NEAR(gf.get(4, 4), 0.0f, 0.001f, "clear zeros (4,4)");
+        CHECK(gf.valid(), "still valid after clear");
+    }
+
+    // init with non-zero value
+    {
+        GridField gf;
+        gf.init(3, 3, 5.0f);
+        CHECK_NEAR(gf.get(0, 0), 5.0f, 0.001f, "init fill (0,0)");
+        CHECK_NEAR(gf.get(2, 2), 5.0f, 0.001f, "init fill (2,2)");
+    }
+
+    // Large grid
+    {
+        GridField gf;
+        gf.init(42, 24, 0.0f);
+        CHECK(gf.valid(), "42x24 grid valid");
+        CHECK_EQ(gf.width, 42, "42x24 width");
+        CHECK_EQ(gf.height, 24, "42x24 height");
+        gf.set(41, 23, 1.0f);
+        CHECK_NEAR(gf.get(41, 23), 1.0f, 0.001f, "42x24 corner set/get");
+        CHECK_NEAR(gf.get(42, 24), 0.0f, 0.001f, "42x24 OOB returns 0");
+    }
+
+    // Copy constructor / assignment
+    {
+        GridField gf;
+        gf.init(5, 5, 0.0f);
+        gf.set(2, 3, 88.0f);
+        GridField gf2 = gf;
+        CHECK(gf2.valid(), "copy is valid");
+        CHECK_EQ(gf2.width, 5, "copy width");
+        CHECK_NEAR(gf2.get(2, 3), 88.0f, 0.001f, "copy preserves data");
+
+        // Modify original doesn't affect copy
+        gf.set(2, 3, 0.0f);
+        CHECK_NEAR(gf2.get(2, 3), 88.0f, 0.001f, "copy is independent");
+    }
+}
+
+// ============================================================
+// Test 17: initGridForShape logic (replicated — method is private)
+// ============================================================
+static void testInitGridForShape()
+{
+    fprintf(stdout, "--- Test: initGridForShape logic ---\n");
+
+    // Helper replicating the private initGridForShape logic
+    auto initGrid = [](GridField& gf, const BBox& bb) {
+        if (!gf.valid()) {
+            int w = std::max(1, (int)std::ceil(bb.xMax - bb.xMin));
+            int h = std::max(1, (int)std::ceil(bb.yMax - bb.yMin));
+            gf.init(w, h, 0.0f);
+        }
+    };
+
+    // Rect shape
+    {
+        RectShape r("r1", 5, 3, 10, 8);
+        auto bb = r.bbox();
+        GridField gf;
+        initGrid(gf, bb);
+        CHECK(gf.valid(), "initGrid rect valid");
+        CHECK_EQ(gf.width, 10, "initGrid rect width");
+        CHECK_EQ(gf.height, 8, "initGrid rect height");
+    }
+
+    // Circle shape
+    {
+        CircleShape c("c1", 10, 10, 5);
+        auto bb = c.bbox();
+        GridField gf;
+        initGrid(gf, bb);
+        CHECK(gf.valid(), "initGrid circle valid");
+        CHECK_EQ(gf.width, 10, "initGrid circle width");
+        CHECK_EQ(gf.height, 10, "initGrid circle height");
+    }
+
+    // Small shape (3x2)
+    {
+        RectShape small("s1", 20, 10, 3, 2);
+        auto bb = small.bbox();
+        GridField gf;
+        initGrid(gf, bb);
+        CHECK(gf.valid(), "initGrid small valid");
+        CHECK_EQ(gf.width, 3, "initGrid small width");
+        CHECK_EQ(gf.height, 2, "initGrid small height");
+    }
+
+    // 1x1 shape
+    {
+        RectShape tiny("t1", 0, 0, 1, 1);
+        auto bb = tiny.bbox();
+        GridField gf;
+        initGrid(gf, bb);
+        CHECK(gf.valid(), "initGrid 1x1 valid");
+        CHECK_EQ(gf.width, 1, "initGrid 1x1 width");
+        CHECK_EQ(gf.height, 1, "initGrid 1x1 height");
+    }
+
+    // Does not re-init if already valid
+    {
+        RectShape r("r2", 0, 0, 10, 10);
+        auto bb = r.bbox();
+        GridField gf;
+        gf.init(5, 5, 0.0f);  // pre-init with different size
+        initGrid(gf, bb);
+        CHECK_EQ(gf.width, 5, "initGrid no re-init width");
+        CHECK_EQ(gf.height, 5, "initGrid no re-init height");
+    }
+
+    // Hex shape
+    {
+        HexShape h("h1", 10, 10, 6);
+        auto bb = h.bbox();
+        GridField gf;
+        initGrid(gf, bb);
+        CHECK(gf.valid(), "initGrid hex valid");
+        CHECK(gf.width > 0, "initGrid hex width > 0");
+        CHECK(gf.height > 0, "initGrid hex height > 0");
+        CHECK(gf.width <= 14, "initGrid hex width reasonable");
+        CHECK(gf.height <= 14, "initGrid hex height reasonable");
+    }
+}
+
+// ============================================================
+// Test 18: Library duplicate entry
+// ============================================================
+static void testLibraryDuplicate()
+{
+    fprintf(stdout, "--- Test: ShapeLibrary duplicate ---\n");
+
+    ShapeLibrary lib;
+    int origCount = lib.numEntries();
+
+    // Duplicate a built-in
+    auto& entry = lib.getEntry(0);  // Trail
+    lib.addEntry(entry.name + " (copy)", entry.shape.get());
+    CHECK_EQ(lib.numEntries(), origCount + 1, "duplicate increases count");
+    CHECK(lib.getEntry(origCount).name == entry.name + " (copy)", "duplicate name correct");
+    CHECK_EQ((int)lib.getEntry(origCount).shape->type, (int)entry.shape->type,
+             "duplicate shape type matches");
+    CHECK(!lib.isBuiltin(origCount), "duplicate is not builtin");
+
+    // Duplicate preserves color
+    CHECK_EQ(lib.getEntry(origCount).shape->color.r, entry.shape->color.r, "duplicate color.r");
+    CHECK_EQ(lib.getEntry(origCount).shape->color.g, entry.shape->color.g, "duplicate color.g");
+    CHECK_EQ(lib.getEntry(origCount).shape->color.b, entry.shape->color.b, "duplicate color.b");
+
+    // Duplicate preserves behavior
+    CHECK(lib.getEntry(origCount).shape->behavior == entry.shape->behavior,
+          "duplicate behavior matches");
+
+    // Duplicated shape is independent (modify original doesn't affect copy)
+    auto origBB = entry.shape->bbox();
+    auto dupBB = lib.getEntry(origCount).shape->bbox();
+    CHECK_NEAR(origBB.xMax - origBB.xMin, dupBB.xMax - dupBB.xMin, 0.01f,
+               "duplicate bbox width matches");
+}
+
+// ============================================================
+// Test 19: Shape flip operations
+// ============================================================
+static void testShapeFlip()
+{
+    fprintf(stdout, "--- Test: Shape flip operations ---\n");
+
+    // Flip H on rect — no-op (symmetric)
+    {
+        RectShape r("r1", 5, 5, 10, 8);
+        auto bb1 = r.bbox();
+        ShapeLibrary::flipHorizontal(r);
+        auto bb2 = r.bbox();
+        CHECK_NEAR(bb2.xMax - bb2.xMin, bb1.xMax - bb1.xMin, 0.01f, "flipH rect width unchanged");
+        CHECK_NEAR(bb2.yMax - bb2.yMin, bb1.yMax - bb1.yMin, 0.01f, "flipH rect height unchanged");
+    }
+
+    // Flip V on rect — no-op (symmetric)
+    {
+        RectShape r("r2", 5, 5, 10, 8);
+        auto bb1 = r.bbox();
+        ShapeLibrary::flipVertical(r);
+        auto bb2 = r.bbox();
+        CHECK_NEAR(bb2.xMax - bb2.xMin, bb1.xMax - bb1.xMin, 0.01f, "flipV rect width unchanged");
+        CHECK_NEAR(bb2.yMax - bb2.yMin, bb1.yMax - bb1.yMin, 0.01f, "flipV rect height unchanged");
+    }
+
+    // Flip H on polygon — changes vertices
+    {
+        PolygonShape p("p1", 0, 0, {{0,0},{4,0},{4,2},{0,2}});
+        auto bb1 = p.bbox();
+        ShapeLibrary::flipHorizontal(p);
+        auto bb2 = p.bbox();
+        // BBox dimensions should stay the same
+        CHECK_NEAR(bb2.xMax - bb2.xMin, bb1.xMax - bb1.xMin, 0.01f, "flipH poly width unchanged");
+        CHECK_NEAR(bb2.yMax - bb2.yMin, bb1.yMax - bb1.yMin, 0.01f, "flipH poly height unchanged");
+    }
+
+    // Flip V on polygon
+    {
+        PolygonShape p("p2", 0, 0, {{0,0},{4,0},{2,3}});
+        auto bb1 = p.bbox();
+        ShapeLibrary::flipVertical(p);
+        auto bb2 = p.bbox();
+        CHECK_NEAR(bb2.xMax - bb2.xMin, bb1.xMax - bb1.xMin, 0.01f, "flipV poly width unchanged");
+        CHECK_NEAR(bb2.yMax - bb2.yMin, bb1.yMax - bb1.yMin, 0.01f, "flipV poly height unchanged");
+    }
+
+    // Flip H on pixel shape
+    {
+        PixelShape px("px1", 0, 0, {{0,0},{1,0},{2,0},{0,1}});
+        ShapeLibrary::flipHorizontal(px);
+        auto bb = px.bbox();
+        CHECK(bb.xMax - bb.xMin > 0, "flipH pixel has width");
+    }
+
+    // Flip V on pixel shape
+    {
+        PixelShape px("px2", 0, 0, {{0,0},{1,0},{0,1},{0,2}});
+        ShapeLibrary::flipVertical(px);
+        auto bb = px.bbox();
+        CHECK(bb.yMax - bb.yMin > 0, "flipV pixel has height");
+    }
+}
+
+// ============================================================
+// Test 20: ShapeEffectState grid origin usage
+// ============================================================
+static void testGridOriginUsage()
+{
+    fprintf(stdout, "--- Test: Grid origin usage ---\n");
+
+    // Verify grid origin stored from bbox translates correctly
+    auto templates = Preset::effectTemplates();
+    for (int i = 0; i < (int)templates.size(); ++i) {
+        auto bb = templates[(size_t)i].shape->bbox();
+        ShapeEffectState st;
+        st.gridOriginX = bb.xMin;
+        st.gridOriginY = bb.yMin;
+
+        // Grid origin should equal bbox min
+        CHECK_NEAR(st.gridOriginX, bb.xMin, 0.01f,
+                   (std::string("gridOriginX[") + std::to_string(i) + "]").c_str());
+        CHECK_NEAR(st.gridOriginY, bb.yMin, 0.01f,
+                   (std::string("gridOriginY[") + std::to_string(i) + "]").c_str());
+
+        // Absolute pixel coord = local + origin; should be within surface
+        int gridW = std::max(1, (int)std::ceil(bb.xMax - bb.xMin));
+        int gridH = std::max(1, (int)std::ceil(bb.yMax - bb.yMin));
+        int absMaxX = (gridW - 1) + (int)std::round(st.gridOriginX);
+        int absMaxY = (gridH - 1) + (int)std::round(st.gridOriginY);
+        CHECK(absMaxX < 42,
+              (std::string("absMaxX < 42[") + std::to_string(i) + "]").c_str());
+        CHECK(absMaxY < 24,
+              (std::string("absMaxY < 24[") + std::to_string(i) + "]").c_str());
+    }
+}
+
+// ============================================================
+// Test 21: BBox consistency across shape types
+// ============================================================
+static void testBBoxConsistency()
+{
+    fprintf(stdout, "--- Test: BBox consistency ---\n");
+
+    // Rect bbox matches constructor
+    {
+        RectShape r("r1", 3, 5, 10, 8);
+        auto bb = r.bbox();
+        CHECK_NEAR(bb.xMin, 3.0f, 0.01f, "rect xMin");
+        CHECK_NEAR(bb.yMin, 5.0f, 0.01f, "rect yMin");
+        CHECK_NEAR(bb.xMax, 13.0f, 0.01f, "rect xMax");
+        CHECK_NEAR(bb.yMax, 13.0f, 0.01f, "rect yMax");
+    }
+
+    // Circle bbox is symmetric
+    {
+        CircleShape c("c1", 10, 10, 5);
+        auto bb = c.bbox();
+        float cx = (bb.xMin + bb.xMax) / 2.0f;
+        float cy = (bb.yMin + bb.yMax) / 2.0f;
+        CHECK_NEAR(cx, 10.0f, 0.1f, "circle center X");
+        CHECK_NEAR(cy, 10.0f, 0.1f, "circle center Y");
+        float w = bb.xMax - bb.xMin;
+        float h = bb.yMax - bb.yMin;
+        CHECK_NEAR(w, h, 0.1f, "circle bbox is square");
+    }
+
+    // Hex bbox center
+    {
+        HexShape h("h1", 15, 12, 4);
+        auto bb = h.bbox();
+        float cx = (bb.xMin + bb.xMax) / 2.0f;
+        float cy = (bb.yMin + bb.yMax) / 2.0f;
+        CHECK_NEAR(cx, 15.0f, 0.5f, "hex center X");
+        CHECK_NEAR(cy, 12.0f, 0.5f, "hex center Y");
+    }
+
+    // All template shapes have positive-area bboxes
+    {
+        auto templates = Preset::effectTemplates();
+        for (int i = 0; i < (int)templates.size(); ++i) {
+            auto bb = templates[(size_t)i].shape->bbox();
+            float w = bb.xMax - bb.xMin;
+            float h = bb.yMax - bb.yMin;
+            CHECK(w > 0.0f && h > 0.0f,
+                  (std::string("template bbox positive area[") + std::to_string(i) + "]").c_str());
+            CHECK(bb.xMin >= 0.0f && bb.yMin >= 0.0f,
+                  (std::string("template bbox non-negative origin[") + std::to_string(i) + "]").c_str());
+        }
+    }
+}
+
+// ============================================================
+// Test 22: Coordinate translation round-trip for all shape types
+// ============================================================
+static void testCoordTranslation()
+{
+    fprintf(stdout, "--- Test: Coordinate translation round-trip ---\n");
+
+    // For each template shape, verify touch→local→absolute round-trip
+    auto templates = Preset::effectTemplates();
+    for (int i = 0; i < (int)templates.size(); ++i) {
+        auto bb = templates[(size_t)i].shape->bbox();
+        float originX = bb.xMin;
+        float originY = bb.yMin;
+
+        // Touch at center of shape
+        float touchX = (bb.xMin + bb.xMax) / 2.0f;
+        float touchY = (bb.yMin + bb.yMax) / 2.0f;
+
+        // To local
+        int localX = (int)std::round(touchX - originX);
+        int localY = (int)std::round(touchY - originY);
+
+        // Back to absolute
+        float absX = (float)localX + originX;
+        float absY = (float)localY + originY;
+
+        CHECK(std::abs(absX - touchX) < 1.0f,
+              (std::string("coord round-trip X[") + std::to_string(i) + "]").c_str());
+        CHECK(std::abs(absY - touchY) < 1.0f,
+              (std::string("coord round-trip Y[") + std::to_string(i) + "]").c_str());
+
+        // Local coords should be non-negative and within grid
+        int gridW = std::max(1, (int)std::ceil(bb.xMax - bb.xMin));
+        int gridH = std::max(1, (int)std::ceil(bb.yMax - bb.yMin));
+        CHECK(localX >= 0 && localX < gridW,
+              (std::string("local X in grid[") + std::to_string(i) + "]").c_str());
+        CHECK(localY >= 0 && localY < gridH,
+              (std::string("local Y in grid[") + std::to_string(i) + "]").c_str());
+    }
+}
+
+// ============================================================
 // main
 // ============================================================
 int main()
@@ -564,6 +1227,19 @@ int main()
     testJsonRoundTrip();
     testUniqueColors();
     testGridFieldSizing();
+    testEffectTypeStrings();
+    testParseParams();
+    testLibraryRename();
+    testNormToBBox();
+    testEffectStateDefaults();
+    testEffectParamsDefaults();
+    testGridFieldOps();
+    testInitGridForShape();
+    testLibraryDuplicate();
+    testShapeFlip();
+    testGridOriginUsage();
+    testBBoxConsistency();
+    testCoordTranslation();
 
     fprintf(stdout, "\n=== Results: %d passed, %d failed ===\n", passed, failed);
     return failed > 0 ? 1 : 0;

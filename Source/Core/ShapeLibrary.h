@@ -43,6 +43,13 @@ public:
             entries_.erase(entries_.begin() + index);
     }
 
+    void renameEntry(int index, const std::string& newName)
+    {
+        if (index < builtinCount_) return;  // protect built-ins
+        if (index >= 0 && index < (int)entries_.size())
+            entries_[(size_t)index].name = newName;
+    }
+
     void populateBuiltins()
     {
         auto templates = Preset::effectTemplates();

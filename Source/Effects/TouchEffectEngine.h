@@ -34,26 +34,26 @@ public:
     void clear();
 
 private:
-    void updateTrail(ShapeEffectState& st, const EffectParams& p, float dt);
-    void updateRipple(ShapeEffectState& st, const EffectParams& p, float dt);
+    void updateTrail(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt);
+    void updateRipple(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt);
     void updateParticles(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt);
-    void updatePulse(ShapeEffectState& st, const EffectParams& p, float dt);
-    void updateBreathe(ShapeEffectState& st, const EffectParams& p, float dt);
-    void updateSpin(ShapeEffectState& st, const EffectParams& p, float dt);
-    void updateOrbit(ShapeEffectState& st, const EffectParams& p, float dt);
-    void updateBoundary(ShapeEffectState& st, const EffectParams& p, float dt);
+    void updatePulse(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt);
+    void updateBreathe(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt);
+    void updateSpin(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt);
+    void updateOrbit(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt);
+    void updateBoundary(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt);
 
     // Physical model update methods (11 new types)
-    void updateString(ShapeEffectState& st, const EffectParams& p, float dt);
+    void updateString(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt);
     void updateMembrane(ShapeEffectState& st, const EffectParams& p, float dt);
     void updateFluid(ShapeEffectState& st, const EffectParams& p, float dt);
     void updateSpringLattice(ShapeEffectState& st, const EffectParams& p, float dt);
-    void updatePendulum(ShapeEffectState& st, const EffectParams& p, float dt);
+    void updatePendulum(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt);
     void updateCollision(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt);
     void updateTombolo(ShapeEffectState& st, const EffectParams& p, float dt);
     void updateGravityWell(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt);
-    void updateElasticBand(ShapeEffectState& st, const EffectParams& p, float dt);
-    void updateBow(ShapeEffectState& st, const EffectParams& p, float dt);
+    void updateElasticBand(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt);
+    void updateBow(ShapeEffectState& st, const EffectParams& p, const BBox& bb, float dt);
     void updateWaveInterference(ShapeEffectState& st, const EffectParams& p, float dt);
 
     static void initGridForShape(GridField& gf, const BBox& bb);

@@ -528,6 +528,30 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     libraryListModel_.onSelectionChanged = [this](int row) {
         updateLibraryPreview(row);
     };
+    libraryListModel_.onDoubleClick = [this](int row) {
+        if (row < 0 || row >= library_.numEntries()) return;
+        if (library_.isBuiltin(row)) return;  // can't rename built-ins
+        auto& entry = library_.getEntry(row);
+        auto* aw = new juce::AlertWindow("Rename", "Enter new name:",
+                                          juce::MessageBoxIconType::NoIcon);
+        aw->addTextEditor("name", juce::String(entry.name));
+        aw->addButton("OK", 1);
+        aw->addButton("Cancel", 0);
+        aw->enterModalState(true, juce::ModalCallbackFunction::create(
+            [this, row, aw](int result) {
+                if (result == 1) {
+                    auto newName = aw->getTextEditorContents("name").toStdString();
+                    if (!newName.empty()) {
+                        library_.renameEntry(row, newName);
+                        library_.save(ShapeLibrary::getDefaultLibraryFile());
+                        libraryList_.updateContent();
+                        libraryList_.repaint();
+                        updateLibraryPreview(row);
+                    }
+                }
+                delete aw;
+            }), true);
+    };
     libraryList_.setModel(&libraryListModel_);
     libraryList_.setRowHeight(20);
     libraryList_.setColour(juce::ListBox::backgroundColourId, Theme::Colors::ButtonBg);
@@ -742,6 +766,150 @@ void EraeEditor::paint(juce::Graphics& g)
             g.fillRoundedRectangle(rx, ry, rw, rh, 2.0f);
             g.setColour(outlineCol);
             g.drawRoundedRectangle(rx, ry, rw, rh, 2.0f, 1.0f);
+        }
+
+        // Effect animation overlay
+        auto ep = TouchEffectEngine::parseParams(*shape);
+        if (ep.type != TouchEffectType::None) {
+            float t = libPreviewPhase_;
+            auto effectCol = fillCol.brighter(0.5f);
+            float halfW = pb.getWidth() * 0.5f;
+            float halfH = pb.getHeight() * 0.5f;
+
+            switch (ep.type) {
+                case TouchEffectType::Ripple:
+                case TouchEffectType::Membrane:
+                case TouchEffectType::WaveInterference: {
+                    // Expanding concentric rings
+                    float maxR = std::min(halfW, halfH);
+                    for (int i = 0; i < 3; ++i) {
+                        float phase = std::fmod(t + i * 0.33f, 1.0f);
+                        float r = phase * maxR;
+                        float alpha = 1.0f - phase;
+                        g.setColour(effectCol.withAlpha(alpha * 0.5f));
+                        g.drawEllipse(pcx - r, pcy - r, r * 2, r * 2, 1.5f);
+                    }
+                    break;
+                }
+                case TouchEffectType::Spin:
+                case TouchEffectType::Orbit: {
+                    // Orbiting dot
+                    float r = std::min(halfW, halfH) * 0.7f;
+                    float angle = t * 6.2832f;
+                    float dotX = pcx + std::cos(angle) * r;
+                    float dotY = pcy + std::sin(angle) * r;
+                    g.setColour(effectCol.withAlpha(0.8f));
+                    g.fillEllipse(dotX - 3, dotY - 3, 6, 6);
+                    // Trail
+                    for (int i = 1; i <= 4; ++i) {
+                        float ta = angle - i * 0.3f;
+                        float tx = pcx + std::cos(ta) * r;
+                        float ty = pcy + std::sin(ta) * r;
+                        g.setColour(effectCol.withAlpha(0.6f - i * 0.12f));
+                        g.fillEllipse(tx - 2, ty - 2, 4, 4);
+                    }
+                    break;
+                }
+                case TouchEffectType::Pulse:
+                case TouchEffectType::Breathe: {
+                    // Pulsing glow
+                    float pulse = 0.3f + 0.7f * (0.5f + 0.5f * std::sin(t * 6.2832f));
+                    float r = std::min(halfW, halfH) * pulse;
+                    g.setColour(effectCol.withAlpha(0.3f * pulse));
+                    g.fillEllipse(pcx - r, pcy - r, r * 2, r * 2);
+                    break;
+                }
+                case TouchEffectType::Particles:
+                case TouchEffectType::Collision:
+                case TouchEffectType::GravityWell: {
+                    // Scattered moving dots
+                    for (int i = 0; i < 8; ++i) {
+                        float seed = (float)i * 1.618f;  // golden ratio spread
+                        float angle = seed * 6.2832f + t * 3.0f;
+                        float dist = (0.3f + 0.5f * std::fmod(seed * 3.7f, 1.0f));
+                        float dx = std::cos(angle) * dist * halfW;
+                        float dy = std::sin(angle) * dist * halfH;
+                        float alpha = 0.4f + 0.4f * std::sin(t * 4.0f + seed);
+                        g.setColour(effectCol.withAlpha(alpha));
+                        g.fillEllipse(pcx + dx - 2, pcy + dy - 2, 4, 4);
+                    }
+                    break;
+                }
+                case TouchEffectType::Trail: {
+                    // Moving dot with fading trail
+                    float angle = t * 4.0f;
+                    float rx = halfW * 0.6f, ry = halfH * 0.4f;
+                    for (int i = 0; i < 6; ++i) {
+                        float ta = angle - i * 0.15f;
+                        float dx = std::cos(ta) * rx;
+                        float dy = std::sin(ta * 1.5f) * ry;
+                        float alpha = 0.8f - i * 0.12f;
+                        float sz = 5.0f - i * 0.5f;
+                        g.setColour(effectCol.withAlpha(std::max(0.0f, alpha)));
+                        g.fillEllipse(pcx + dx - sz * 0.5f, pcy + dy - sz * 0.5f, sz, sz);
+                    }
+                    break;
+                }
+                case TouchEffectType::String:
+                case TouchEffectType::Bow:
+                case TouchEffectType::ElasticBand: {
+                    // Vibrating line
+                    juce::Path wave;
+                    float left = pb.getX() + 4;
+                    float right = pb.getRight() - 4;
+                    float amp = halfH * 0.4f * std::sin(t * 6.2832f);
+                    wave.startNewSubPath(left, pcy);
+                    for (float wx = left; wx <= right; wx += 2.0f) {
+                        float frac = (wx - left) / (right - left);
+                        float env = std::sin(frac * 3.14159f);
+                        float wy = pcy + amp * env * std::sin(frac * 12.566f + t * 8.0f);
+                        wave.lineTo(wx, wy);
+                    }
+                    g.setColour(effectCol.withAlpha(0.7f));
+                    g.strokePath(wave, juce::PathStrokeType(2.0f));
+                    break;
+                }
+                case TouchEffectType::Pendulum: {
+                    // Swinging pendulum
+                    float theta = 0.6f * std::sin(t * 5.0f);
+                    float armLen = std::min(halfW, halfH) * 0.8f;
+                    float bx = pcx + std::sin(theta) * armLen;
+                    float by = pcy - halfH * 0.3f + std::cos(theta) * armLen;
+                    g.setColour(effectCol.withAlpha(0.5f));
+                    g.drawLine(pcx, pcy - halfH * 0.3f, bx, by, 1.5f);
+                    g.setColour(effectCol.withAlpha(0.8f));
+                    g.fillEllipse(bx - 4, by - 4, 8, 8);
+                    break;
+                }
+                case TouchEffectType::Fluid:
+                case TouchEffectType::Tombolo:
+                case TouchEffectType::SpringLattice: {
+                    // Flowing wave pattern
+                    for (int row = 0; row < 3; ++row) {
+                        juce::Path wave;
+                        float wy = pcy + (row - 1) * halfH * 0.5f;
+                        wave.startNewSubPath(pb.getX(), wy);
+                        for (float wx = pb.getX(); wx <= pb.getRight(); wx += 3.0f) {
+                            float frac = (wx - pb.getX()) / pb.getWidth();
+                            float dy = 4.0f * std::sin(frac * 12.566f - t * 6.0f + row * 1.5f);
+                            wave.lineTo(wx, wy + dy);
+                        }
+                        g.setColour(effectCol.withAlpha(0.35f));
+                        g.strokePath(wave, juce::PathStrokeType(1.5f));
+                    }
+                    break;
+                }
+                case TouchEffectType::Boundary: {
+                    // Pulsing outline
+                    float pulse = 0.5f + 0.5f * std::sin(t * 6.2832f);
+                    g.setColour(effectCol.withAlpha(0.4f + 0.4f * pulse));
+                    auto inset = pb.reduced(4.0f + 3.0f * pulse);
+                    g.drawRoundedRectangle(inset, 4.0f, 2.0f);
+                    break;
+                }
+                default:
+                    break;
+            }
         }
     }
 
@@ -1861,6 +2029,17 @@ void EraeEditor::timerCallback()
 
     updateConnectButton();
     updateLoopButton();
+
+    // Advance library effect preview animation
+    if (libPreviewRow_ >= 0 && libPreviewRow_ < library_.numEntries()) {
+        auto& entry = library_.getEntry(libPreviewRow_);
+        auto p = TouchEffectEngine::parseParams(*entry.shape);
+        if (p.type != TouchEffectType::None) {
+            libPreviewPhase_ += 0.05f;  // 20fps × 0.05 = 1.0 per second
+            if (libPreviewPhase_ > 100.0f) libPreviewPhase_ -= 100.0f;
+            repaint(libPreviewBounds_);
+        }
+    }
 }
 
 void EraeEditor::pageChanged(int /*pageIndex*/)

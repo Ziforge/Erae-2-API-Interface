@@ -193,6 +193,7 @@ private:
     juce::Label libDescLabel_;     // effect description text
     int libPreviewRow_ = -1;       // selected library row for preview (-1 = none)
     juce::Rectangle<int> libPreviewBounds_;  // preview drawing area (set in resized)
+    float libPreviewPhase_ = 0.0f; // animation phase for effect preview
 
     // Sidebar — selection info (always visible at bottom)
     juce::Label selectionLabel_;
@@ -204,6 +205,7 @@ private:
     struct LibraryListModel : public juce::ListBoxModel {
         ShapeLibrary* library = nullptr;
         std::function<void(int)> onSelectionChanged;
+        std::function<void(int)> onDoubleClick;
         int getNumRows() override { return library ? library->numEntries() : 0; }
         void paintListBoxItem(int row, juce::Graphics& g, int w, int h, bool selected) override
         {
@@ -228,6 +230,10 @@ private:
         void selectedRowsChanged(int lastRowSelected) override
         {
             if (onSelectionChanged) onSelectionChanged(lastRowSelected);
+        }
+        void listBoxItemDoubleClicked(int row, const juce::MouseEvent&) override
+        {
+            if (onDoubleClick) onDoubleClick(row);
         }
     };
     LibraryListModel libraryListModel_;
