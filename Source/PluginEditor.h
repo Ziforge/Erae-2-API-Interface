@@ -53,6 +53,8 @@ public:
     void copyRequested() override;
     void cutRequested() override;
     void pasteRequested() override;
+    void designModeChanged(bool active) override;
+    void designFinished(std::set<std::pair<int,int>> cells) override;
 
     // juce::Timer — refresh finger overlay + connection status
     void timerCallback() override;
@@ -73,6 +75,13 @@ private:
     juce::TextButton drawPolyButton_  {"Poly"};
     juce::TextButton drawPixelButton_ {"Pixel"};
     juce::TextButton pixelDoneButton_ {"Done"};
+
+    // Design mode toolbar
+    juce::TextButton designButton_       {"Design"};
+    juce::TextButton designDoneButton_   {"Done"};
+    juce::TextButton designCancelButton_ {"Cancel"};
+    juce::ToggleButton designSymHToggle_ {"Sym H"};
+    juce::ToggleButton designSymVToggle_ {"Sym V"};
 
     // Toolbar — actions
     juce::ComboBox presetSelector_;
@@ -195,6 +204,8 @@ private:
     void performAlignment(std::function<std::vector<AlignResult>(Layout&, const std::set<std::string>&)> fn, const std::string& name);
     void showTabContent(SidebarTabBar::Tab tab);
     void updateVisualControls();
+    void showDesignToolbar(bool show);
+    int designShapeCounter_ = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EraeEditor)
 };

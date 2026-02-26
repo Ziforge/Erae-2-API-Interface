@@ -36,6 +36,20 @@ void GridCanvas::setLayout(Layout& newLayout)
 
 void GridCanvas::setToolMode(ToolMode mode)
 {
+    // In design mode, just switch tool — don't exit design
+    if (designMode_) {
+        cancelPolygonCreation();
+        creating_ = false;
+        painting_ = false;
+        // Don't allow Select or EditShape in design mode
+        if (mode == ToolMode::Select || mode == ToolMode::EditShape)
+            mode = ToolMode::Paint;
+        toolMode_ = mode;
+        setMouseCursor(juce::MouseCursor::CrosshairCursor);
+        repaint();
+        return;
+    }
+
     // Cancel any in-progress creation when switching tools
     cancelPolygonCreation();
     cancelPixelCreation();
@@ -466,7 +480,7 @@ void GridCanvas::undoPixelStroke()
 // Edit-shape mode
 // ============================================================
 
-void GridCanvas::enterEditMode(const std::string& shapeId)
+void GridCanvas::enterEditMode(const std::string& shapeId, bool resizeOnly)
 {
     auto* s = layout_->getShape(shapeId);
     if (!s) return;
@@ -474,6 +488,7 @@ void GridCanvas::enterEditMode(const std::string& shapeId)
     editingShapeId_ = shapeId;
     editOrigShape_ = s->clone();
     editConverted_ = false;
+    editResizeOnly_ = resizeOnly;
     editSymmetryH_ = false;
     editSymmetryV_ = false;
 
@@ -488,7 +503,8 @@ void GridCanvas::enterEditMode(const std::string& shapeId)
 
     toolMode_ = ToolMode::EditShape;
     selMgr_.select(shapeId);
-    setMouseCursor(juce::MouseCursor::CrosshairCursor);
+    setMouseCursor(resizeOnly ? juce::MouseCursor::NormalCursor
+                              : juce::MouseCursor::CrosshairCursor);
     repaint();
 }
 
@@ -542,6 +558,7 @@ void GridCanvas::exitEditMode(bool commit)
     editOrigShape_.reset();
     editCells_.clear();
     editConverted_ = false;
+    editResizeOnly_ = false;
     editDraggingHandle_ = HandlePos::None;
     editSnapshots_.clear();
     editSymmetryH_ = false;
@@ -687,6 +704,201 @@ HandlePos GridCanvas::editHitTestHandle(juce::Point<float> screenPos) const
 }
 
 // ============================================================
+// Design-shape mode
+// ============================================================
+
+void GridCanvas::enterDesignMode(const std::string& shapeId)
+{
+    // Cancel any in-progress operations
+    cancelPolygonCreation();
+    cancelPixelCreation();
+    if (!editingShapeId_.empty())
+        exitEditMode(true);
+
+    designMode_ = true;
+    designCells_.clear();
+    designOrigShapeId_ = shapeId;
+    designSymmetryH_ = false;
+    designSymmetryV_ = false;
+    designDraggingHandle_ = HandlePos::None;
+    designSnapshots_.clear();
+
+    // If editing an existing shape, load its pixels
+    if (!shapeId.empty()) {
+        auto* s = layout_->getShape(shapeId);
+        if (s) {
+            for (auto& [cx, cy] : s->gridPixels())
+                designCells_.insert({cx, cy});
+        }
+    }
+
+    // Save initial state as first snapshot
+    designSnapshots_.push_back(designCells_);
+
+    // Default to Paint tool in design mode
+    designPrevToolMode_ = toolMode_;
+    toolMode_ = ToolMode::Paint;
+    setMouseCursor(juce::MouseCursor::CrosshairCursor);
+
+    for (auto* l : canvasListeners_) l->designModeChanged(true);
+    repaint();
+}
+
+void GridCanvas::exitDesignMode(bool save)
+{
+    if (!designMode_) return;
+
+    if (save && !designCells_.empty()) {
+        for (auto* l : canvasListeners_)
+            l->designFinished(designCells_);
+    }
+
+    designMode_ = false;
+    designCells_.clear();
+    designOrigShapeId_.clear();
+    designSymmetryH_ = false;
+    designSymmetryV_ = false;
+    designDraggingHandle_ = HandlePos::None;
+    designDragStartCells_.clear();
+    designSnapshots_.clear();
+
+    toolMode_ = ToolMode::Select;
+    setMouseCursor(juce::MouseCursor::NormalCursor);
+
+    for (auto* l : canvasListeners_) l->designModeChanged(false);
+    repaint();
+}
+
+void GridCanvas::designAddCell(int cx, int cy)
+{
+    if (cx < 0 || cx >= Theme::GridW || cy < 0 || cy >= Theme::GridH) return;
+    designCells_.insert({cx, cy});
+
+    if (designSymmetryH_ || designSymmetryV_) {
+        if (designCells_.empty()) return;
+        auto eit = designCells_.begin();
+        int minX = eit->first, maxX = minX, minY = eit->second, maxY = minY;
+        for (auto& [x, y] : designCells_) {
+            minX = std::min(minX, x); maxX = std::max(maxX, x);
+            minY = std::min(minY, y); maxY = std::max(maxY, y);
+        }
+        if (designSymmetryH_) {
+            int mx = minX + maxX - cx;
+            if (mx >= 0 && mx < Theme::GridW)
+                designCells_.insert({mx, cy});
+        }
+        if (designSymmetryV_) {
+            int my = minY + maxY - cy;
+            if (my >= 0 && my < Theme::GridH)
+                designCells_.insert({cx, my});
+        }
+        if (designSymmetryH_ && designSymmetryV_) {
+            int mx = minX + maxX - cx;
+            int my = minY + maxY - cy;
+            if (mx >= 0 && mx < Theme::GridW && my >= 0 && my < Theme::GridH)
+                designCells_.insert({mx, my});
+        }
+    }
+}
+
+void GridCanvas::designRemoveCell(int cx, int cy)
+{
+    designCells_.erase({cx, cy});
+
+    if (!designCells_.empty() && (designSymmetryH_ || designSymmetryV_)) {
+        auto eit = designCells_.begin();
+        int minX = eit->first, maxX = minX, minY = eit->second, maxY = minY;
+        for (auto& [x, y] : designCells_) {
+            minX = std::min(minX, x); maxX = std::max(maxX, x);
+            minY = std::min(minY, y); maxY = std::max(maxY, y);
+        }
+        if (designSymmetryH_)
+            designCells_.erase({minX + maxX - cx, cy});
+        if (designSymmetryV_)
+            designCells_.erase({cx, minY + maxY - cy});
+        if (designSymmetryH_ && designSymmetryV_)
+            designCells_.erase({minX + maxX - cx, minY + maxY - cy});
+    }
+}
+
+void GridCanvas::designStampCells(const std::vector<std::pair<int,int>>& cells)
+{
+    for (auto& [cx, cy] : cells) {
+        if (cx >= 0 && cx < Theme::GridW && cy >= 0 && cy < Theme::GridH) {
+            designCells_.insert({cx, cy});
+            // Apply symmetry to stamped cells too
+            if (designSymmetryH_ || designSymmetryV_) {
+                if (designCells_.empty()) continue;
+                auto eit = designCells_.begin();
+                int minX = eit->first, maxX = minX, minY = eit->second, maxY = minY;
+                for (auto& [x, y] : designCells_) {
+                    minX = std::min(minX, x); maxX = std::max(maxX, x);
+                    minY = std::min(minY, y); maxY = std::max(maxY, y);
+                }
+                if (designSymmetryH_) {
+                    int mx = minX + maxX - cx;
+                    if (mx >= 0 && mx < Theme::GridW)
+                        designCells_.insert({mx, cy});
+                }
+                if (designSymmetryV_) {
+                    int my = minY + maxY - cy;
+                    if (my >= 0 && my < Theme::GridH)
+                        designCells_.insert({cx, my});
+                }
+                if (designSymmetryH_ && designSymmetryV_) {
+                    int mx = minX + maxX - cx;
+                    int my = minY + maxY - cy;
+                    if (mx >= 0 && mx < Theme::GridW && my >= 0 && my < Theme::GridH)
+                        designCells_.insert({mx, my});
+                }
+            }
+        }
+    }
+}
+
+juce::Rectangle<float> GridCanvas::designBBoxScreen() const
+{
+    if (designCells_.empty()) return {};
+    auto it = designCells_.begin();
+    int minX = it->first, minY = it->second;
+    int maxX = minX, maxY = minY;
+    for (auto& [cx, cy] : designCells_) {
+        minX = std::min(minX, cx);
+        minY = std::min(minY, cy);
+        maxX = std::max(maxX, cx);
+        maxY = std::max(maxY, cy);
+    }
+    return gridCellToScreen((float)minX, (float)minY, (float)(maxX - minX + 1), (float)(maxY - minY + 1));
+}
+
+HandlePos GridCanvas::designHitTestHandle(juce::Point<float> screenPos) const
+{
+    auto bb = designBBoxScreen();
+    if (bb.isEmpty()) return HandlePos::None;
+
+    float hs = HandleSize;
+    float hh = hs / 2;
+
+    struct { HandlePos pos; float hx, hy; } handles[] = {
+        {HandlePos::TopLeft,     bb.getX(),       bb.getY()},
+        {HandlePos::Top,         bb.getCentreX(), bb.getY()},
+        {HandlePos::TopRight,    bb.getRight(),   bb.getY()},
+        {HandlePos::Right,       bb.getRight(),   bb.getCentreY()},
+        {HandlePos::BottomRight, bb.getRight(),   bb.getBottom()},
+        {HandlePos::Bottom,      bb.getCentreX(), bb.getBottom()},
+        {HandlePos::BottomLeft,  bb.getX(),       bb.getBottom()},
+        {HandlePos::Left,        bb.getX(),       bb.getCentreY()},
+    };
+
+    for (auto& h : handles) {
+        auto hr = juce::Rectangle<float>(h.hx - hh, h.hy - hh, hs, hs).expanded(2);
+        if (hr.contains(screenPos))
+            return h.pos;
+    }
+    return HandlePos::None;
+}
+
+// ============================================================
 // Rendering
 // ============================================================
 
@@ -694,16 +906,38 @@ void GridCanvas::paint(juce::Graphics& g)
 {
     g.fillAll(Theme::Colors::CanvasBg);
     drawGrid(g);
-    drawShapes(g);
-    drawHoverHighlight(g);
-    drawFingerOverlay(g);
-    drawSelection(g);
-    drawCreationPreview(g);
-    drawPolygonCreationPreview(g);
-    drawPixelCreationPreview(g);
-    drawEditModeOverlay(g);
-    drawCursor(g);
-    drawCoordinateReadout(g);
+
+    if (designMode_) {
+        // In design mode: dim existing shapes, show design cells prominently
+        {
+            juce::Graphics::ScopedSaveState sss(g);
+            g.reduceClipRegion(getLocalBounds());
+            for (auto& shape : layout_->shapes()) {
+                auto col = shape->color.toJuceColour().withAlpha(0.15f);
+                g.setColour(col);
+                for (auto& [px, py] : shape->gridPixels()) {
+                    auto cellRect = gridCellToScreen((float)px, (float)py, 1.0f, 1.0f);
+                    g.fillRect(cellRect);
+                }
+            }
+        }
+        drawDesignModeOverlay(g);
+        drawCreationPreview(g);
+        drawPolygonCreationPreview(g);
+        drawCursor(g);
+        drawCoordinateReadout(g);
+    } else {
+        drawShapes(g);
+        drawHoverHighlight(g);
+        drawFingerOverlay(g);
+        drawSelection(g);
+        drawCreationPreview(g);
+        drawPolygonCreationPreview(g);
+        drawPixelCreationPreview(g);
+        drawEditModeOverlay(g);
+        drawCursor(g);
+        drawCoordinateReadout(g);
+    }
 }
 
 void GridCanvas::drawGrid(juce::Graphics& g)
@@ -1060,10 +1294,94 @@ void GridCanvas::drawEditModeOverlay(juce::Graphics& g)
     g.drawText(editLabel, 6, 4, 320, 16, juce::Justification::centredLeft, false);
 }
 
+void GridCanvas::drawDesignModeOverlay(juce::Graphics& g)
+{
+    if (!designMode_) return;
+
+    // Draw each design cell
+    auto cellCol = juce::Colour(80, 220, 180).withAlpha(0.25f);
+    auto borderCol = Theme::Colors::Accent.withAlpha(0.7f);
+
+    for (auto& [cx, cy] : designCells_) {
+        auto cellRect = gridCellToScreen((float)cx, (float)cy, 1.0f, 1.0f);
+        g.setColour(cellCol);
+        g.fillRect(cellRect);
+        g.setColour(borderCol);
+        g.drawRect(cellRect, 0.5f);
+    }
+
+    // Draw bounding box with resize handles
+    auto bb = designBBoxScreen();
+    if (!bb.isEmpty()) {
+        g.setColour(Theme::Colors::Selection);
+        g.drawRect(bb, 1.5f);
+
+        float hs = HandleSize;
+        float hh = hs / 2;
+        auto drawHandle = [&](float hx, float hy) {
+            auto hr = juce::Rectangle<float>(hx - hh, hy - hh, hs, hs);
+            g.setColour(Theme::Colors::HandleFill);
+            g.fillRoundedRectangle(hr, 2.0f);
+            g.setColour(Theme::Colors::HandleBorder);
+            g.drawRoundedRectangle(hr, 2.0f, 1.0f);
+        };
+        drawHandle(bb.getX(), bb.getY());
+        drawHandle(bb.getCentreX(), bb.getY());
+        drawHandle(bb.getRight(), bb.getY());
+        drawHandle(bb.getRight(), bb.getCentreY());
+        drawHandle(bb.getRight(), bb.getBottom());
+        drawHandle(bb.getCentreX(), bb.getBottom());
+        drawHandle(bb.getX(), bb.getBottom());
+        drawHandle(bb.getX(), bb.getCentreY());
+    }
+
+    // Symmetry axis indicators
+    if (designSymmetryH_ || designSymmetryV_) {
+        auto sbb = designBBoxScreen();
+        if (!sbb.isEmpty()) {
+            float dashes[] = {6.0f, 4.0f};
+            juce::PathStrokeType dashStroke(1.0f);
+            g.setColour(juce::Colour(255, 200, 50).withAlpha(0.5f));
+            if (designSymmetryH_) {
+                juce::Path hLine;
+                hLine.startNewSubPath(sbb.getCentreX(), sbb.getY() - 8);
+                hLine.lineTo(sbb.getCentreX(), sbb.getBottom() + 8);
+                juce::Path dashedH;
+                dashStroke.createDashedStroke(dashedH, hLine, dashes, 2);
+                g.fillPath(dashedH);
+            }
+            if (designSymmetryV_) {
+                juce::Path vLine;
+                vLine.startNewSubPath(sbb.getX() - 8, sbb.getCentreY());
+                vLine.lineTo(sbb.getRight() + 8, sbb.getCentreY());
+                juce::Path dashedV;
+                dashStroke.createDashedStroke(dashedV, vLine, dashes, 2);
+                g.fillPath(dashedV);
+            }
+        }
+    }
+
+    // Design mode indicator text
+    juce::String designLabel = "DESIGN SHAPE (Enter=Done, ESC=Cancel)";
+    if (designSymmetryH_ || designSymmetryV_) {
+        designLabel += "  Mirror:";
+        if (designSymmetryH_) designLabel += " H";
+        if (designSymmetryV_) designLabel += " V";
+    }
+    g.setFont(juce::Font(11.0f, juce::Font::bold));
+    g.setColour(juce::Colour(80, 220, 180).withAlpha(0.9f));
+    g.drawText(designLabel, 6, 4, 400, 16, juce::Justification::centredLeft, false);
+}
+
 void GridCanvas::drawCursor(juce::Graphics& g)
 {
-    if (toolMode_ != ToolMode::Paint && toolMode_ != ToolMode::Erase
-        && toolMode_ != ToolMode::DrawPixel && toolMode_ != ToolMode::EditShape) return;
+    bool showCursor = (toolMode_ == ToolMode::Paint || toolMode_ == ToolMode::Erase
+        || toolMode_ == ToolMode::DrawPixel || toolMode_ == ToolMode::EditShape);
+    // In design mode, also show cursor for paint/erase tools
+    if (designMode_)
+        showCursor = (toolMode_ == ToolMode::Paint || toolMode_ == ToolMode::Erase
+                      || toolMode_ == ToolMode::DrawPixel);
+    if (!showCursor) return;
     if (cursorGrid_.x < 0 || cursorGrid_.y < 0) return;
 
     int cx = (int)std::floor(cursorGrid_.x);
@@ -1122,6 +1440,102 @@ void GridCanvas::mouseDown(const juce::MouseEvent& e)
     }
 
     auto gridPos = screenToGrid(e.position);
+
+    // ---- DESIGN MODE ----
+    if (designMode_) {
+        if (e.mods.isLeftButtonDown()) {
+            switch (toolMode_) {
+                case ToolMode::Paint:
+                case ToolMode::DrawPixel: {
+                    painting_ = true;
+                    // Check resize handles first
+                    auto hp = designHitTestHandle(e.position);
+                    if (hp != HandlePos::None) {
+                        designDraggingHandle_ = hp;
+                        dragStartGrid_ = gridPos;
+                        currentDragId_ = ++dragIdCounter_;
+                        designDragStartCells_ = designCells_;
+                        if (!designCells_.empty()) {
+                            auto eit = designCells_.begin();
+                            int minX = eit->first, minY = eit->second;
+                            int maxX = minX, maxY = minY;
+                            for (auto& [cx, cy] : designCells_) {
+                                minX = std::min(minX, cx); minY = std::min(minY, cy);
+                                maxX = std::max(maxX, cx); maxY = std::max(maxY, cy);
+                            }
+                            designDragStartX_ = (float)minX; designDragStartY_ = (float)minY;
+                            designDragStartW_ = (float)(maxX - minX + 1);
+                            designDragStartH_ = (float)(maxY - minY + 1);
+                        }
+                        break;
+                    }
+                    int cx = (int)std::floor(gridPos.x), cy = (int)std::floor(gridPos.y);
+                    int half = brushSize_ / 2;
+                    for (int dy = -half; dy < brushSize_ - half; ++dy)
+                        for (int dx = -half; dx < brushSize_ - half; ++dx)
+                            designAddCell(cx + dx, cy + dy);
+                    repaint();
+                    break;
+                }
+                case ToolMode::Erase: {
+                    painting_ = true;
+                    int cx = (int)std::floor(gridPos.x), cy = (int)std::floor(gridPos.y);
+                    int half = brushSize_ / 2;
+                    for (int dy = -half; dy < brushSize_ - half; ++dy)
+                        for (int dx = -half; dx < brushSize_ - half; ++dx)
+                            designRemoveCell(cx + dx, cy + dy);
+                    repaint();
+                    break;
+                }
+                case ToolMode::DrawRect:
+                case ToolMode::DrawCircle:
+                case ToolMode::DrawHex:
+                    creating_ = true;
+                    createStartGrid_ = gridPos;
+                    createEndGrid_ = gridPos;
+                    break;
+                case ToolMode::DrawPoly: {
+                    auto snapped = juce::Point<float>(snapToGrid(gridPos.x), snapToGrid(gridPos.y));
+                    if (e.getNumberOfClicks() >= 2 && polyVertices_.size() >= 3) {
+                        // Finish polygon: stamp into design cells
+                        auto cx = polyVertices_[0].x, cy = polyVertices_[0].y;
+                        for (auto& v : polyVertices_) { cx = std::min(cx, v.x); cy = std::min(cy, v.y); }
+                        std::vector<std::pair<float,float>> relVerts;
+                        for (auto& v : polyVertices_)
+                            relVerts.push_back({v.x - cx, v.y - cy});
+                        auto tempPoly = std::make_unique<PolygonShape>("_tmp", cx, cy, std::move(relVerts));
+                        designStampCells(tempPoly->gridPixels());
+                        polyVertices_.clear();
+                        creatingPoly_ = false;
+                        // Save snapshot for undo
+                        if (designSnapshots_.empty() || designCells_ != designSnapshots_.back())
+                            designSnapshots_.push_back(designCells_);
+                    } else {
+                        polyVertices_.push_back(snapped);
+                        polyRubberBand_ = snapped;
+                        creatingPoly_ = true;
+                    }
+                    repaint();
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+        // Right-click erase in design mode
+        else if (e.mods.isRightButtonDown()) {
+            if (toolMode_ == ToolMode::Paint || toolMode_ == ToolMode::DrawPixel || toolMode_ == ToolMode::Erase) {
+                painting_ = true;
+                int cx = (int)std::floor(gridPos.x), cy = (int)std::floor(gridPos.y);
+                int half = brushSize_ / 2;
+                for (int dy = -half; dy < brushSize_ - half; ++dy)
+                    for (int dx = -half; dx < brushSize_ - half; ++dx)
+                        designRemoveCell(cx + dx, cy + dy);
+                repaint();
+            }
+        }
+        return;
+    }
 
     if (e.mods.isLeftButtonDown()) {
         switch (toolMode_) {
@@ -1250,6 +1664,7 @@ void GridCanvas::mouseDown(const juce::MouseEvent& e)
                     editDraggingHandle_ = hp;
                     dragStartGrid_ = gridPos;
                     currentDragId_ = ++dragIdCounter_;
+                    editDragStartCells_ = editCells_; // snapshot for scaling
                     // Use edit cells bounding box
                     if (!editCells_.empty()) {
                         auto eit = editCells_.begin();
@@ -1276,18 +1691,20 @@ void GridCanvas::mouseDown(const juce::MouseEvent& e)
                     }
                 }
 
-                // Left-click: add cell (with symmetry)
-                int ecx = (int)std::floor(gridPos.x), ecy = (int)std::floor(gridPos.y);
-                if (ecx >= 0 && ecx < Theme::GridW && ecy >= 0 && ecy < Theme::GridH) {
-                    editAddCell(ecx, ecy);
-                    syncEditCellsToShape();
+                // Left-click: add cell (with symmetry) — only in pixel edit mode
+                if (!editResizeOnly_) {
+                    int ecx = (int)std::floor(gridPos.x), ecy = (int)std::floor(gridPos.y);
+                    if (ecx >= 0 && ecx < Theme::GridW && ecy >= 0 && ecy < Theme::GridH) {
+                        editAddCell(ecx, ecy);
+                        syncEditCellsToShape();
+                    }
                 }
                 break;
             }
         }
     }
-    // Right-click erase in EditShape mode (with symmetry)
-    else if (e.mods.isRightButtonDown() && toolMode_ == ToolMode::EditShape) {
+    // Right-click erase in EditShape mode (with symmetry) — only in pixel edit mode
+    else if (e.mods.isRightButtonDown() && toolMode_ == ToolMode::EditShape && !editResizeOnly_) {
         if (!editingShapeId_.empty()) {
             int ecx = (int)std::floor(gridPos.x), ecy = (int)std::floor(gridPos.y);
             editRemoveCell(ecx, ecy);
@@ -1300,12 +1717,18 @@ void GridCanvas::mouseDown(const juce::MouseEvent& e)
         if (hit) {
             auto shapeId = hit->id;
             juce::PopupMenu menu;
-            menu.addItem(1, "Edit Shape");
+            menu.addItem(1, "Edit Pixels");
+            menu.addItem(2, "Resize");
+            menu.addItem(3, "Design Shape");
             menu.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea(
                 juce::Rectangle<int>((int)e.getScreenX(), (int)e.getScreenY(), 1, 1)),
                 [this, shapeId](int result) {
                     if (result == 1)
-                        enterEditMode(shapeId);
+                        enterEditMode(shapeId, false);
+                    else if (result == 2)
+                        enterEditMode(shapeId, true);
+                    else if (result == 3)
+                        enterDesignMode(shapeId);
                 });
         }
     }
@@ -1344,6 +1767,91 @@ void GridCanvas::mouseDrag(const juce::MouseEvent& e)
     auto gridPos = screenToGrid(e.position);
     cursorGrid_ = gridPos;
 
+    // Design-mode handle resize drag
+    if (designMode_ && designDraggingHandle_ != HandlePos::None) {
+        float dx = gridPos.x - dragStartGrid_.x;
+        float dy = gridPos.y - dragStartGrid_.y;
+
+        float nx = designDragStartX_, ny = designDragStartY_;
+        float nw = designDragStartW_, nh = designDragStartH_;
+
+        switch (designDraggingHandle_) {
+            case HandlePos::TopLeft:     nx += dx; ny += dy; nw -= dx; nh -= dy; break;
+            case HandlePos::Top:         ny += dy; nh -= dy; break;
+            case HandlePos::TopRight:    ny += dy; nw += dx; nh -= dy; break;
+            case HandlePos::Right:       nw += dx; break;
+            case HandlePos::BottomRight: nw += dx; nh += dy; break;
+            case HandlePos::Bottom:      nh += dy; break;
+            case HandlePos::BottomLeft:  nx += dx; nw -= dx; nh += dy; break;
+            case HandlePos::Left:        nx += dx; nw -= dx; break;
+            default: break;
+        }
+
+        nx = snapToGrid(nx); ny = snapToGrid(ny);
+        nw = snapToGrid(nw); nh = snapToGrid(nh);
+        if (nw < 1.0f) nw = 1.0f;
+        if (nh < 1.0f) nh = 1.0f;
+
+        if (!designDragStartCells_.empty()) {
+            int oldMinX = (int)designDragStartX_;
+            int oldMinY = (int)designDragStartY_;
+            float oldW = designDragStartW_;
+            float oldH = designDragStartH_;
+
+            if (oldW > 0 && oldH > 0) {
+                int newW = (int)nw, newH = (int)nh;
+                int newX = (int)nx, newY = (int)ny;
+
+                std::set<std::pair<int,int>> newCells;
+                for (int ddy = 0; ddy < newH; ++ddy) {
+                    for (int ddx = 0; ddx < newW; ++ddx) {
+                        int srcX = oldMinX + (int)std::floor((float)ddx * oldW / (float)newW);
+                        int srcY = oldMinY + (int)std::floor((float)ddy * oldH / (float)newH);
+                        if (designDragStartCells_.count({srcX, srcY})) {
+                            int cx = newX + ddx;
+                            int cy = newY + ddy;
+                            if (cx >= 0 && cx < Theme::GridW && cy >= 0 && cy < Theme::GridH)
+                                newCells.insert({cx, cy});
+                        }
+                    }
+                }
+                designCells_ = std::move(newCells);
+            }
+        }
+        repaint();
+        return;
+    }
+
+    // Design-mode painting during drag
+    if (designMode_ && designDraggingHandle_ == HandlePos::None) {
+        if ((toolMode_ == ToolMode::Paint || toolMode_ == ToolMode::DrawPixel) && painting_) {
+            int cx = (int)std::floor(gridPos.x), cy = (int)std::floor(gridPos.y);
+            int half = brushSize_ / 2;
+            if (e.mods.isLeftButtonDown()) {
+                for (int dy = -half; dy < brushSize_ - half; ++dy)
+                    for (int dx = -half; dx < brushSize_ - half; ++dx)
+                        designAddCell(cx + dx, cy + dy);
+            } else if (e.mods.isRightButtonDown()) {
+                for (int dy = -half; dy < brushSize_ - half; ++dy)
+                    for (int dx = -half; dx < brushSize_ - half; ++dx)
+                        designRemoveCell(cx + dx, cy + dy);
+            }
+        }
+        if (toolMode_ == ToolMode::Erase && painting_) {
+            int cx = (int)std::floor(gridPos.x), cy = (int)std::floor(gridPos.y);
+            int half = brushSize_ / 2;
+            for (int dy = -half; dy < brushSize_ - half; ++dy)
+                for (int dx = -half; dx < brushSize_ - half; ++dx)
+                    designRemoveCell(cx + dx, cy + dy);
+        }
+        if (creating_)
+            createEndGrid_ = gridPos;
+        if (creatingPoly_)
+            polyRubberBand_ = juce::Point<float>(snapToGrid(gridPos.x), snapToGrid(gridPos.y));
+        repaint();
+        return;
+    }
+
     // Edit-shape handle resize drag
     if (editDraggingHandle_ != HandlePos::None && !editingShapeId_.empty()) {
         float dx = gridPos.x - dragStartGrid_.x;
@@ -1371,32 +1879,30 @@ void GridCanvas::mouseDrag(const juce::MouseEvent& e)
         if (nw < 1.0f) nw = 1.0f;
         if (nh < 1.0f) nh = 1.0f;
 
-        // Scale editCells_ to fit the new bounding box
-        if (!editCells_.empty()) {
-            auto oit = editCells_.begin();
-            int oldMinX = oit->first, oldMinY = oit->second;
-            int oldMaxX = oldMinX, oldMaxY = oldMinY;
-            for (auto& [cx, cy] : editCells_) {
-                oldMinX = std::min(oldMinX, cx);
-                oldMinY = std::min(oldMinY, cy);
-                oldMaxX = std::max(oldMaxX, cx);
-                oldMaxY = std::max(oldMaxY, cy);
-            }
-            float oldW = (float)(oldMaxX - oldMinX + 1);
-            float oldH = (float)(oldMaxY - oldMinY + 1);
+        // Scale cells using reverse mapping from drag-start snapshot
+        if (!editDragStartCells_.empty()) {
+            int oldMinX = (int)dragStartX_;
+            int oldMinY = (int)dragStartY_;
+            float oldW = dragStartW_;
+            float oldH = dragStartH_;
 
             if (oldW > 0 && oldH > 0) {
-                float scaleX = nw / oldW;
-                float scaleY = nh / oldH;
+                int newW = (int)nw, newH = (int)nh;
+                int newX = (int)nx, newY = (int)ny;
 
                 std::set<std::pair<int,int>> newCells;
-                for (auto& [cx, cy] : editCells_) {
-                    float relX = (float)(cx - oldMinX);
-                    float relY = (float)(cy - oldMinY);
-                    int newCX = (int)nx + (int)std::floor(relX * scaleX);
-                    int newCY = (int)ny + (int)std::floor(relY * scaleY);
-                    if (newCX >= 0 && newCX < Theme::GridW && newCY >= 0 && newCY < Theme::GridH)
-                        newCells.insert({newCX, newCY});
+                for (int dy = 0; dy < newH; ++dy) {
+                    for (int dx = 0; dx < newW; ++dx) {
+                        // Reverse map: which original cell does this new cell come from?
+                        int srcX = oldMinX + (int)std::floor((float)dx * oldW / (float)newW);
+                        int srcY = oldMinY + (int)std::floor((float)dy * oldH / (float)newH);
+                        if (editDragStartCells_.count({srcX, srcY})) {
+                            int cx = newX + dx;
+                            int cy = newY + dy;
+                            if (cx >= 0 && cx < Theme::GridW && cy >= 0 && cy < Theme::GridH)
+                                newCells.insert({cx, cy});
+                        }
+                    }
                 }
                 editCells_ = std::move(newCells);
                 syncEditCellsToShape();
@@ -1495,8 +2001,8 @@ void GridCanvas::mouseDrag(const juce::MouseEvent& e)
     if (creatingPoly_)
         polyRubberBand_ = juce::Point<float>(snapToGrid(gridPos.x), snapToGrid(gridPos.y));
 
-    // Edit-shape painting/erasing during drag (with symmetry)
-    if (toolMode_ == ToolMode::EditShape && !editingShapeId_.empty() && editDraggingHandle_ == HandlePos::None) {
+    // Edit-shape painting/erasing during drag (with symmetry) — only in pixel edit mode
+    if (toolMode_ == ToolMode::EditShape && !editingShapeId_.empty() && editDraggingHandle_ == HandlePos::None && !editResizeOnly_) {
         int ecx = (int)std::floor(gridPos.x), ecy = (int)std::floor(gridPos.y);
         if (ecx >= 0 && ecx < Theme::GridW && ecy >= 0 && ecy < Theme::GridH) {
             if (e.mods.isLeftButtonDown()) {
@@ -1538,11 +2044,62 @@ void GridCanvas::mouseUp(const juce::MouseEvent&)
     draggingShape_ = false;
     draggingHandle_ = HandlePos::None;
     editDraggingHandle_ = HandlePos::None;
+    designDraggingHandle_ = HandlePos::None;
     strokeCells_.clear();
     dragOrigins_.clear();
 
+    // Design mode: stamp creation tool results into designCells_
+    if (designMode_ && creating_) {
+        float x0 = snapToGrid(std::min(createStartGrid_.x, createEndGrid_.x));
+        float y0 = snapToGrid(std::min(createStartGrid_.y, createEndGrid_.y));
+        float x1 = snapToGrid(std::max(createStartGrid_.x, createEndGrid_.x));
+        float y1 = snapToGrid(std::max(createStartGrid_.y, createEndGrid_.y));
+        float w = x1 - x0, h = y1 - y0;
+
+        std::unique_ptr<Shape> tempShape;
+        switch (toolMode_) {
+            case ToolMode::DrawRect: {
+                if (w < 0.5f) w = 1;
+                if (h < 0.5f) h = 1;
+                tempShape = std::make_unique<RectShape>("_tmp", x0, y0, w, h);
+                break;
+            }
+            case ToolMode::DrawCircle: {
+                float cx = (x0 + x1) / 2.0f, cy = (y0 + y1) / 2.0f;
+                float r = std::max(w, h) / 2.0f;
+                if (r < 0.5f) r = 0.5f;
+                tempShape = std::make_unique<CircleShape>("_tmp", cx, cy, r);
+                break;
+            }
+            case ToolMode::DrawHex: {
+                float cx = (x0 + x1) / 2.0f, cy = (y0 + y1) / 2.0f;
+                float r = std::max(w, h) / 2.0f;
+                if (r < 0.5f) r = 0.5f;
+                tempShape = std::make_unique<HexShape>("_tmp", cx, cy, r);
+                break;
+            }
+            default: break;
+        }
+
+        if (tempShape)
+            designStampCells(tempShape->gridPixels());
+
+        creating_ = false;
+        // Save snapshot for undo
+        if (designSnapshots_.empty() || designCells_ != designSnapshots_.back())
+            designSnapshots_.push_back(designCells_);
+        repaint();
+        return;
+    }
+
     if (creating_)
         finishCreation();
+
+    // Save design snapshot after paint/erase stroke
+    if (designMode_) {
+        if (designSnapshots_.empty() || designCells_ != designSnapshots_.back())
+            designSnapshots_.push_back(designCells_);
+    }
 
     // Save pixel stroke to history
     if (toolMode_ == ToolMode::DrawPixel && !currentStroke_.empty()) {
@@ -1570,6 +2127,39 @@ void GridCanvas::mouseUp(const juce::MouseEvent&)
 void GridCanvas::mouseMove(const juce::MouseEvent& e)
 {
     cursorGrid_ = screenToGrid(e.position);
+
+    // Design mode cursor handling
+    if (designMode_) {
+        if (toolMode_ == ToolMode::Paint || toolMode_ == ToolMode::Erase || toolMode_ == ToolMode::DrawPixel) {
+            // Check resize handle hover
+            auto hp = designHitTestHandle(e.position);
+            switch (hp) {
+                case HandlePos::TopLeft:
+                case HandlePos::BottomRight:
+                    setMouseCursor(juce::MouseCursor::TopLeftCornerResizeCursor); break;
+                case HandlePos::TopRight:
+                case HandlePos::BottomLeft:
+                    setMouseCursor(juce::MouseCursor::TopRightCornerResizeCursor); break;
+                case HandlePos::Top:
+                case HandlePos::Bottom:
+                    setMouseCursor(juce::MouseCursor::UpDownResizeCursor); break;
+                case HandlePos::Left:
+                case HandlePos::Right:
+                    setMouseCursor(juce::MouseCursor::LeftRightResizeCursor); break;
+                case HandlePos::None:
+                    setMouseCursor(juce::MouseCursor::CrosshairCursor); break;
+            }
+            repaint();
+        } else if (toolMode_ == ToolMode::DrawRect || toolMode_ == ToolMode::DrawCircle
+                   || toolMode_ == ToolMode::DrawHex || toolMode_ == ToolMode::DrawPoly) {
+            setMouseCursor(juce::MouseCursor::CrosshairCursor);
+            if (creatingPoly_) {
+                polyRubberBand_ = juce::Point<float>(snapToGrid(cursorGrid_.x), snapToGrid(cursorGrid_.y));
+            }
+            repaint();
+        }
+        return;
+    }
 
     if (toolMode_ == ToolMode::Select) {
         auto* hit = layout_->hitTest(cursorGrid_.x, cursorGrid_.y);
@@ -1622,7 +2212,8 @@ void GridCanvas::mouseMove(const juce::MouseEvent& e)
             case HandlePos::Right:
                 setMouseCursor(juce::MouseCursor::LeftRightResizeCursor); break;
             case HandlePos::None:
-                setMouseCursor(juce::MouseCursor::CrosshairCursor); break;
+                setMouseCursor(editResizeOnly_ ? juce::MouseCursor::NormalCursor
+                                               : juce::MouseCursor::CrosshairCursor); break;
         }
         repaint();
     }
@@ -1652,6 +2243,74 @@ void GridCanvas::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWhee
 
 bool GridCanvas::keyPressed(const juce::KeyPress& key)
 {
+    // Design mode keys
+    if (designMode_) {
+        // Enter → finish design (save)
+        if (key == juce::KeyPress::returnKey) {
+            // In design mode with poly in progress, stamp it first
+            if (creatingPoly_ && polyVertices_.size() >= 3) {
+                auto cx = polyVertices_[0].x, cy = polyVertices_[0].y;
+                for (auto& v : polyVertices_) { cx = std::min(cx, v.x); cy = std::min(cy, v.y); }
+                std::vector<std::pair<float,float>> relVerts;
+                for (auto& v : polyVertices_)
+                    relVerts.push_back({v.x - cx, v.y - cy});
+                auto tempPoly = std::make_unique<PolygonShape>("_tmp", cx, cy, std::move(relVerts));
+                designStampCells(tempPoly->gridPixels());
+                polyVertices_.clear();
+                creatingPoly_ = false;
+                if (designSnapshots_.empty() || designCells_ != designSnapshots_.back())
+                    designSnapshots_.push_back(designCells_);
+            }
+            exitDesignMode(true);
+            return true;
+        }
+        // ESC → cancel design
+        if (key == juce::KeyPress::escapeKey) {
+            cancelPolygonCreation();
+            exitDesignMode(false);
+            return true;
+        }
+        // Symmetry toggles: S=H, D=V (plan spec)
+        if (key.getTextCharacter() == 's' || key.getTextCharacter() == 'S') {
+            designSymmetryH_ = !designSymmetryH_;
+            for (auto* l : canvasListeners_) l->designModeChanged(true);
+            repaint();
+            return true;
+        }
+        if (key.getTextCharacter() == 'd' || key.getTextCharacter() == 'D') {
+            designSymmetryV_ = !designSymmetryV_;
+            for (auto* l : canvasListeners_) l->designModeChanged(true);
+            repaint();
+            return true;
+        }
+        // Ctrl+Z → undo last design stroke
+        if (key.getModifiers().isCommandDown() && key.getKeyCode() == 'Z'
+            && !key.getModifiers().isShiftDown()) {
+            if (designSnapshots_.size() > 1) {
+                designSnapshots_.pop_back();
+                designCells_ = designSnapshots_.back();
+                repaint();
+            }
+            return true;
+        }
+        // Tool shortcuts within design mode
+        auto switchTool = [this](ToolMode m) {
+            cancelPolygonCreation();
+            creating_ = false;
+            toolMode_ = m;
+            setMouseCursor(juce::MouseCursor::CrosshairCursor);
+            for (auto* l : canvasListeners_) l->toolModeChanged(m);
+        };
+        if (key.getTextCharacter() == 'b' || key.getTextCharacter() == 'B') { switchTool(ToolMode::Paint); return true; }
+        if (key.getTextCharacter() == 'e' || key.getTextCharacter() == 'E') { switchTool(ToolMode::Erase); return true; }
+        if (key.getTextCharacter() == 'r' || key.getTextCharacter() == 'R') { switchTool(ToolMode::DrawRect); return true; }
+        if (key.getTextCharacter() == 'c' || key.getTextCharacter() == 'C') { switchTool(ToolMode::DrawCircle); return true; }
+        if (key.getTextCharacter() == 'h' || key.getTextCharacter() == 'H') { switchTool(ToolMode::DrawHex); return true; }
+        if (key.getTextCharacter() == 'p' || key.getTextCharacter() == 'P') { switchTool(ToolMode::DrawPoly); return true; }
+        if (key.getTextCharacter() == 'g' || key.getTextCharacter() == 'G') { switchTool(ToolMode::DrawPixel); return true; }
+        return false;
+    }
+
     // Enter → finish poly/pixel creation
     if (key == juce::KeyPress::returnKey) {
         if (creatingPoly_ && polyVertices_.size() >= 3) { finishPolygonCreation(); return true; }

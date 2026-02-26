@@ -59,6 +59,36 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     pixelDoneButton_.setVisible(false);
     addAndMakeVisible(pixelDoneButton_);
 
+    // --- Toolbar: Design button ---
+    designButton_.setTooltip("Design a new shape for the library");
+    designButton_.onClick = [this] { canvas_.enterDesignMode(); };
+    addAndMakeVisible(designButton_);
+
+    // --- Toolbar: Design mode Done/Cancel/Symmetry (hidden by default) ---
+    designDoneButton_.setTooltip("Finish design and save to library (Enter)");
+    designDoneButton_.onClick = [this] { canvas_.exitDesignMode(true); };
+    designDoneButton_.setVisible(false);
+    addAndMakeVisible(designDoneButton_);
+
+    designCancelButton_.setTooltip("Cancel design (ESC)");
+    designCancelButton_.onClick = [this] { canvas_.exitDesignMode(false); };
+    designCancelButton_.setVisible(false);
+    addAndMakeVisible(designCancelButton_);
+
+    designSymHToggle_.setTooltip("Horizontal symmetry (S)");
+    designSymHToggle_.onClick = [this] {
+        canvas_.setDesignSymmetryH(designSymHToggle_.getToggleState());
+    };
+    designSymHToggle_.setVisible(false);
+    addAndMakeVisible(designSymHToggle_);
+
+    designSymVToggle_.setTooltip("Vertical symmetry (D)");
+    designSymVToggle_.onClick = [this] {
+        canvas_.setDesignSymmetryV(designSymVToggle_.getToggleState());
+    };
+    designSymVToggle_.setVisible(false);
+    addAndMakeVisible(designSymVToggle_);
+
     // --- Toolbar: brush size ---
     brushSizeSelector_.addItem("1px", 1);
     brushSizeSelector_.addItem("2px", 2);
@@ -578,13 +608,29 @@ void EraeEditor::resized()
     drawPixelButton_.setBounds(toolbar.removeFromLeft(btnW + 4));
     toolbar.removeFromLeft(Theme::SpaceXS);
     pixelDoneButton_.setBounds(toolbar.removeFromLeft(btnW));
-    toolbar.removeFromLeft(Theme::SpaceLG);
+    toolbar.removeFromLeft(Theme::SpaceXS);
+    designButton_.setBounds(toolbar.removeFromLeft(btnW + 12));
+    toolbar.removeFromLeft(Theme::SpaceXS);
+
+    // Design mode Done/Cancel/Symmetry (overlaid in same region when active)
+    if (canvas_.isDesigning()) {
+        designDoneButton_.setBounds(toolbar.removeFromLeft(btnW));
+        toolbar.removeFromLeft(Theme::SpaceXS);
+        designCancelButton_.setBounds(toolbar.removeFromLeft(btnW + 8));
+        toolbar.removeFromLeft(Theme::SpaceSM);
+        designSymHToggle_.setBounds(toolbar.removeFromLeft(56));
+        toolbar.removeFromLeft(Theme::SpaceXS);
+        designSymVToggle_.setBounds(toolbar.removeFromLeft(56));
+        toolbar.removeFromLeft(Theme::SpaceLG);
+    } else {
+        toolbar.removeFromLeft(Theme::SpaceLG);
+    }
 
     // Brush size
     brushSizeSelector_.setBounds(toolbar.removeFromLeft(56));
     toolbar.removeFromLeft(Theme::SpaceMD);
 
-    // Presets + New/Save/Load
+    // Presets + New/Save/Load (hidden in design mode but still need layout)
     presetSelector_.setBounds(toolbar.removeFromLeft(140));
     toolbar.removeFromLeft(Theme::SpaceSM);
     newButton_.setBounds(toolbar.removeFromLeft(btnW - 4));
@@ -894,8 +940,9 @@ void EraeEditor::updateToolButtons()
     style(drawPolyButton_,  mode == ToolMode::DrawPoly);
     style(drawPixelButton_, mode == ToolMode::DrawPixel);
 
-    // Show "Done" button only in DrawPixel/DrawPoly mode
-    pixelDoneButton_.setVisible(mode == ToolMode::DrawPixel || mode == ToolMode::DrawPoly);
+    // Show "Done" button only in DrawPixel/DrawPoly mode (not in design mode)
+    if (!canvas_.isDesigning())
+        pixelDoneButton_.setVisible(mode == ToolMode::DrawPixel || mode == ToolMode::DrawPoly);
     if (mode == ToolMode::DrawPoly)
         pixelDoneButton_.setButtonText("Done");
     else
@@ -1025,6 +1072,82 @@ void EraeEditor::pasteRequested()
 {
     clipboard_.paste(processor_.getLayout(), processor_.getUndoManager(),
                      selectionManager_, shapeCounterRef_);
+}
+
+// ============================================================
+// Design mode callbacks
+// ============================================================
+
+void EraeEditor::designModeChanged(bool active)
+{
+    showDesignToolbar(active);
+    if (active) {
+        // Sync toggle states
+        designSymHToggle_.setToggleState(canvas_.getDesignSymmetryH(), juce::dontSendNotification);
+        designSymVToggle_.setToggleState(canvas_.getDesignSymmetryV(), juce::dontSendNotification);
+    }
+    updateToolButtons();
+    updateStatus();
+    resized();
+}
+
+void EraeEditor::designFinished(std::set<std::pair<int,int>> cells)
+{
+    if (cells.empty()) return;
+
+    // Compute bounding box
+    auto it = cells.begin();
+    int minX = it->first, minY = it->second;
+    for (auto& [cx, cy] : cells) {
+        minX = std::min(minX, cx);
+        minY = std::min(minY, cy);
+    }
+
+    // Build relative cells
+    std::vector<std::pair<int,int>> relCells;
+    for (auto& [cx, cy] : cells)
+        relCells.push_back({cx - minX, cy - minY});
+
+    // Create PixelShape
+    auto name = "custom_" + std::to_string(++designShapeCounter_);
+    auto shape = std::make_unique<PixelShape>(name, (float)minX, (float)minY, std::move(relCells));
+    shape->color = canvas_.getPaintColor();
+    shape->colorActive = brighten(canvas_.getPaintColor());
+
+    // Add to library
+    library_.addEntry(name, shape.get());
+    library_.save(ShapeLibrary::getDefaultLibraryFile());
+    libraryList_.updateContent();
+    libraryList_.repaint();
+
+    // Switch to Library tab so user sees their new shape
+    tabBar_.setActiveTab(SidebarTabBar::Library);
+    showTabContent(SidebarTabBar::Library);
+    resized();
+}
+
+void EraeEditor::showDesignToolbar(bool show)
+{
+    // Toggle visibility of normal vs design toolbar elements
+    selectButton_.setVisible(!show);
+    // Keep paint/erase/creation tools visible in design mode
+    // but hide Select and some action buttons
+    designButton_.setVisible(!show);
+    pixelDoneButton_.setVisible(!show && (canvas_.getToolMode() == ToolMode::DrawPixel
+                                          || canvas_.getToolMode() == ToolMode::DrawPoly));
+
+    designDoneButton_.setVisible(show);
+    designCancelButton_.setVisible(show);
+    designSymHToggle_.setVisible(show);
+    designSymVToggle_.setVisible(show);
+
+    // Hide some actions that don't apply in design mode
+    deleteButton_.setVisible(!show);
+    dupeButton_.setVisible(!show);
+    presetSelector_.setVisible(!show);
+    newButton_.setVisible(!show);
+    saveButton_.setVisible(!show);
+    loadButton_.setVisible(!show);
 }
 
 void EraeEditor::updateSelectionInfo()
@@ -1173,16 +1296,21 @@ void EraeEditor::updateStatus()
     auto& layout = processor_.getLayout();
     auto mode = canvas_.getToolMode();
     const char* modeName = "?";
-    switch (mode) {
-        case ToolMode::Select:     modeName = "Select"; break;
-        case ToolMode::Paint:      modeName = "Paint"; break;
-        case ToolMode::Erase:      modeName = "Erase"; break;
-        case ToolMode::DrawRect:   modeName = "Draw Rect"; break;
-        case ToolMode::DrawCircle: modeName = "Draw Circle"; break;
-        case ToolMode::DrawHex:    modeName = "Draw Hex"; break;
-        case ToolMode::DrawPoly:   modeName = "Draw Poly"; break;
-        case ToolMode::DrawPixel:  modeName = "Draw Pixel"; break;
-        case ToolMode::EditShape:  modeName = "Edit Shape"; break;
+
+    if (canvas_.isDesigning()) {
+        modeName = "Design Shape";
+    } else {
+        switch (mode) {
+            case ToolMode::Select:     modeName = "Select"; break;
+            case ToolMode::Paint:      modeName = "Paint"; break;
+            case ToolMode::Erase:      modeName = "Erase"; break;
+            case ToolMode::DrawRect:   modeName = "Draw Rect"; break;
+            case ToolMode::DrawCircle: modeName = "Draw Circle"; break;
+            case ToolMode::DrawHex:    modeName = "Draw Hex"; break;
+            case ToolMode::DrawPoly:   modeName = "Draw Poly"; break;
+            case ToolMode::DrawPixel:  modeName = "Draw Pixel"; break;
+            case ToolMode::EditShape:  modeName = "Edit Shape"; break;
+        }
     }
 
     auto& conn = processor_.getConnection();

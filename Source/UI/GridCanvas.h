@@ -33,6 +33,8 @@ public:
         virtual void copyRequested() {}
         virtual void cutRequested() {}
         virtual void pasteRequested() {}
+        virtual void designModeChanged(bool /*active*/) {}
+        virtual void designFinished(std::set<std::pair<int,int>> /*cells*/) {}
     };
 
     GridCanvas(Layout& layout, UndoManager& undoManager, SelectionManager& selectionManager);
@@ -98,9 +100,19 @@ public:
     bool isCreatingPoly() const { return creatingPoly_; }
 
     // Edit-shape mode
-    void enterEditMode(const std::string& shapeId);
+    void enterEditMode(const std::string& shapeId, bool resizeOnly = false);
     void exitEditMode(bool commit = true);
     bool isEditingShape() const { return !editingShapeId_.empty(); }
+
+    // Design-shape mode (full-canvas shape designer)
+    void enterDesignMode(const std::string& shapeId = "");
+    void exitDesignMode(bool save);
+    bool isDesigning() const { return designMode_; }
+    const std::set<std::pair<int,int>>& getDesignCells() const { return designCells_; }
+    bool getDesignSymmetryH() const { return designSymmetryH_; }
+    bool getDesignSymmetryV() const { return designSymmetryV_; }
+    void setDesignSymmetryH(bool v) { designSymmetryH_ = v; repaint(); }
+    void setDesignSymmetryV(bool v) { designSymmetryV_ = v; repaint(); }
 
     void addListener(Listener* l) { canvasListeners_.push_back(l); }
     void removeListener(Listener* l) {
@@ -119,6 +131,7 @@ private:
     void drawPixelCreationPreview(juce::Graphics& g);
     void drawCursor(juce::Graphics& g);
     void drawEditModeOverlay(juce::Graphics& g);
+    void drawDesignModeOverlay(juce::Graphics& g);
     void drawFingerOverlay(juce::Graphics& g);
     void drawCoordinateReadout(juce::Graphics& g);
 
@@ -149,6 +162,13 @@ private:
     void editRemoveCell(int cx, int cy);
     HandlePos editHitTestHandle(juce::Point<float> screenPos) const;
     juce::Rectangle<float> editBBoxScreen() const;
+
+    // Design-mode helpers
+    void designAddCell(int cx, int cy);
+    void designRemoveCell(int cx, int cy);
+    void designStampCells(const std::vector<std::pair<int,int>>& cells);
+    HandlePos designHitTestHandle(juce::Point<float> screenPos) const;
+    juce::Rectangle<float> designBBoxScreen() const;
 
     // Grid snap
     float snapToGrid(float v) const { return std::round(v); }
@@ -220,12 +240,26 @@ private:
     std::set<std::string> highlightedShapes_;
     bool perFingerColors_ = true;
 
+    // Design-shape mode state
+    bool designMode_ = false;
+    std::set<std::pair<int,int>> designCells_;        // accumulated design cells (absolute grid coords)
+    std::string designOrigShapeId_;                    // if editing existing shape
+    bool designSymmetryH_ = false;
+    bool designSymmetryV_ = false;
+    HandlePos designDraggingHandle_ = HandlePos::None;
+    std::set<std::pair<int,int>> designDragStartCells_;
+    float designDragStartX_, designDragStartY_, designDragStartW_, designDragStartH_;
+    std::vector<std::set<std::pair<int,int>>> designSnapshots_; // for per-stroke undo
+    ToolMode designPrevToolMode_ = ToolMode::Paint;    // tool mode before entering design
+
     // Edit-shape mode state
     std::string editingShapeId_;
     std::unique_ptr<Shape> editOrigShape_;        // clone of shape before editing
     std::set<std::pair<int,int>> editCells_;       // absolute grid coords of current cells
     bool editConverted_ = false;                   // true if we auto-converted to PixelShape
+    bool editResizeOnly_ = false;                  // true = only handle resize, no cell painting
     HandlePos editDraggingHandle_ = HandlePos::None;
+    std::set<std::pair<int,int>> editDragStartCells_;         // cells snapshot at resize drag start
     std::vector<std::set<std::pair<int,int>>> editSnapshots_; // cell snapshots for per-stroke undo
     bool editSymmetryH_ = false;                   // horizontal mirror painting
     bool editSymmetryV_ = false;                   // vertical mirror painting
