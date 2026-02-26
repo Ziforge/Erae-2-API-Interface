@@ -20,6 +20,7 @@ build/
 *.synctex.gz
 *.tex
 *.pdf
+!docs/erae_api_reference/Erae_API_V2.pdf
 *.bib
 *.bbl
 *.blg
