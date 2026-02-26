@@ -10,7 +10,7 @@ build/
 *.swp
 *~
 
-# LaTeX build artifacts
+# LaTeX / docs
 *.aux
 *.log
 *.out
@@ -18,3 +18,8 @@ build/
 *.fls
 *.fdb_latexmk
 *.synctex.gz
+*.tex
+*.pdf
+*.bib
+*.bbl
+*.blg
