@@ -18,10 +18,10 @@ FetchContent_MakeAvailable(JUCE)
 juce_add_plugin(EraeShapeEditor
     COMPANY_NAME "EraeTools"
     BUNDLE_ID "com.eraetools.shapeeditor"
-    IS_SYNTH FALSE
+    IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT TRUE
-    IS_MIDI_EFFECT TRUE
+    IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS TRUE
     COPY_PLUGIN_AFTER_BUILD TRUE
     PLUGIN_MANUFACTURER_CODE ErTl
@@ -83,6 +83,7 @@ target_sources(EraeShapeEditor
         Source/MIDI/ScaleQuantizer.h
         Source/MIDI/OscOutput.h
         Source/MIDI/DawFeedback.h
+        Source/MIDI/CVOutput.h
         # Rendering (Phase 5)
         Source/Rendering/FingerPalette.h
 )

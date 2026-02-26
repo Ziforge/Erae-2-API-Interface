@@ -131,6 +131,26 @@ EraeEditor::EraeEditor(EraeProcessor& p)
         processor_.getDawFeedback().updateFromLayout(ml.currentPage());
         updateStatus();
     };
+    pageDelButton_.onClick = [this] {
+        auto& ml = processor_.getMultiLayout();
+        if (ml.numPages() > 1) {
+            ml.removePage(ml.currentPageIndex());
+            canvas_.setLayout(ml.currentPage());
+            selectionManager_.clear();
+            processor_.getDawFeedback().updateFromLayout(ml.currentPage());
+            updateStatus();
+        }
+    };
+    pageDupButton_.onClick = [this] {
+        auto& ml = processor_.getMultiLayout();
+        ml.duplicatePage(ml.currentPageIndex());
+        canvas_.setLayout(ml.currentPage());
+        selectionManager_.clear();
+        processor_.getDawFeedback().updateFromLayout(ml.currentPage());
+        updateStatus();
+    };
+    pageDelButton_.setTooltip("Delete current page");
+    pageDupButton_.setTooltip("Duplicate current page");
     pageLabel_.setFont(juce::Font(Theme::FontSmall));
     pageLabel_.setColour(juce::Label::textColourId, Theme::Colors::Text);
     pageLabel_.setJustificationType(juce::Justification::centred);
@@ -138,6 +158,8 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     addAndMakeVisible(pageLabel_);
     addAndMakeVisible(pageNextButton_);
     addAndMakeVisible(pageAddButton_);
+    addAndMakeVisible(pageDelButton_);
+    addAndMakeVisible(pageDupButton_);
 
     // --- Toolbar: Erae connection ---
     connectButton_.onClick = [this] {
@@ -173,6 +195,49 @@ EraeEditor::EraeEditor(EraeProcessor& p)
     };
     dawFeedbackToggle_.setTooltip("DAW MIDI feedback highlights");
     addAndMakeVisible(dawFeedbackToggle_);
+
+    // --- Sidebar: OSC output settings ---
+    oscLabel_.setFont(juce::Font(Theme::FontSection, juce::Font::bold));
+    oscLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
+    addAndMakeVisible(oscLabel_);
+
+    oscToggle_.setToggleState(processor_.getOscOutput().isEnabled(), juce::dontSendNotification);
+    oscToggle_.onClick = [this] {
+        auto& osc = processor_.getOscOutput();
+        if (oscToggle_.getToggleState())
+            osc.enable(oscHostEditor_.getText().toStdString(), (int)oscPortSlider_.getValue());
+        else
+            osc.disable();
+    };
+    addAndMakeVisible(oscToggle_);
+
+    oscHostLabel_.setFont(juce::Font(Theme::FontBase));
+    oscHostLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
+    addAndMakeVisible(oscHostLabel_);
+
+    oscHostEditor_.setText(processor_.getOscOutput().getHost());
+    oscHostEditor_.setFont(juce::Font(Theme::FontBase));
+    oscHostEditor_.onReturnKey = [this] {
+        if (oscToggle_.getToggleState())
+            processor_.getOscOutput().enable(oscHostEditor_.getText().toStdString(), (int)oscPortSlider_.getValue());
+    };
+    addAndMakeVisible(oscHostEditor_);
+
+    oscPortLabel_.setFont(juce::Font(Theme::FontBase));
+    oscPortLabel_.setColour(juce::Label::textColourId, Theme::Colors::TextDim);
+    addAndMakeVisible(oscPortLabel_);
+
+    oscPortSlider_.setRange(1024, 65535, 1);
+    oscPortSlider_.setValue(processor_.getOscOutput().getPort(), juce::dontSendNotification);
+    oscPortSlider_.setSliderStyle(juce::Slider::LinearBar);
+    oscPortSlider_.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 50, 20);
+    oscPortSlider_.setColour(juce::Slider::trackColourId, Theme::Colors::Accent);
+    oscPortSlider_.setColour(juce::Slider::textBoxTextColourId, Theme::Colors::Text);
+    oscPortSlider_.onValueChange = [this] {
+        if (oscToggle_.getToggleState())
+            processor_.getOscOutput().enable(oscHostEditor_.getText().toStdString(), (int)oscPortSlider_.getValue());
+    };
+    addAndMakeVisible(oscPortSlider_);
 
     // --- Canvas ---
     canvas_.addListener(this);
@@ -358,6 +423,10 @@ void EraeEditor::resized()
     toolbar.removeFromRight(Theme::SpaceXS);
     fingerColorsToggle_.setBounds(toolbar.removeFromRight(68));
     toolbar.removeFromRight(Theme::SpaceSM);
+    pageDupButton_.setBounds(toolbar.removeFromRight(32));
+    toolbar.removeFromRight(Theme::SpaceXS);
+    pageDelButton_.setBounds(toolbar.removeFromRight(24));
+    toolbar.removeFromRight(Theme::SpaceXS);
     pageAddButton_.setBounds(toolbar.removeFromRight(24));
     pageNextButton_.setBounds(toolbar.removeFromRight(24));
     pageLabel_.setBounds(toolbar.removeFromRight(60));
@@ -425,6 +494,24 @@ void EraeEditor::resized()
     }
     sidebar.removeFromTop(Theme::SpaceLG);
 
+    // OSC settings section (at bottom of sidebar)
+    auto oscArea = sidebar.removeFromBottom(110);
+    oscLabel_.setBounds(oscArea.removeFromTop(18));
+    oscArea.removeFromTop(3);
+    oscToggle_.setBounds(oscArea.removeFromTop(22));
+    oscArea.removeFromTop(3);
+    {
+        auto row = oscArea.removeFromTop(22);
+        oscHostLabel_.setBounds(row.removeFromLeft(34));
+        oscHostEditor_.setBounds(row);
+        oscArea.removeFromTop(3);
+    }
+    {
+        auto row = oscArea.removeFromTop(22);
+        oscPortLabel_.setBounds(row.removeFromLeft(34));
+        oscPortSlider_.setBounds(row);
+    }
+
     // Property panel gets the remaining space
     propertyPanel_.setBounds(sidebar);
 
@@ -487,8 +574,11 @@ void EraeEditor::colorChanged(Color7 newColor)
 void EraeEditor::behaviorChanged(const std::string& shapeId)
 {
     auto* s = processor_.getLayout().getShape(shapeId);
-    if (s)
+    if (s) {
         processor_.getLayout().setBehavior(shapeId, s->behavior, s->behaviorParams);
+        // Rebuild DawFeedback lookup when note/channel assignments change
+        processor_.getDawFeedback().updateFromLayout(processor_.getLayout());
+    }
 }
 
 // ============================================================

@@ -100,6 +100,13 @@ private:
     juce::Label ccYMaxLabel_   {"", "Y Max"};
     juce::Slider ccYMaxSlider_;
 
+    // CV output
+    juce::Label cvLabel_        {"", "CV OUTPUT"};
+    juce::Label cvEnableLabel_  {"", "CV Enabled"};
+    juce::ToggleButton cvEnableToggle_;
+    juce::Label cvChannelLabel_ {"", "CV Channel"};
+    juce::Slider cvChannelSlider_;
+
     // Visual style controls
     juce::Label visualLabel_    {"", "VISUAL"};
     juce::ComboBox visualBox_;

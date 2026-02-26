@@ -220,6 +220,21 @@ PropertyPanel::PropertyPanel(Layout& layout)
     addAndMakeVisible(ccYMaxLabel_);
     addAndMakeVisible(ccYMaxSlider_);
 
+    // --- CV output ---
+    styleLabel(cvLabel_, true);
+    addAndMakeVisible(cvLabel_);
+
+    styleLabel(cvEnableLabel_);
+    cvEnableToggle_.addListener(this);
+    addAndMakeVisible(cvEnableLabel_);
+    addAndMakeVisible(cvEnableToggle_);
+
+    styleLabel(cvChannelLabel_);
+    styleSlider(cvChannelSlider_, 0, 31, 0);
+    cvChannelSlider_.addListener(this);
+    addAndMakeVisible(cvChannelLabel_);
+    addAndMakeVisible(cvChannelSlider_);
+
     // Visual style
     styleLabel(visualLabel_, true);
     addAndMakeVisible(visualLabel_);
@@ -332,6 +347,18 @@ void PropertyPanel::resized()
     layoutRow(ccYMinLabel_, ccYMinSlider_);
     layoutRow(ccYMaxLabel_, ccYMaxSlider_);
 
+    area.removeFromTop(gap + 2);
+
+    // CV output section
+    cvLabel_.setBounds(area.removeFromTop(18));
+    area.removeFromTop(3);
+    {
+        auto row = area.removeFromTop(rowH);
+        cvEnableLabel_.setBounds(row.removeFromLeft(labelW));
+        cvEnableToggle_.setBounds(row.removeFromLeft(rowH));
+        area.removeFromTop(3);
+    }
+    layoutRow(cvChannelLabel_, cvChannelSlider_);
     area.removeFromTop(gap + 2);
 
     // Visual style section
@@ -447,6 +474,10 @@ void PropertyPanel::loadShape(Shape* shape)
     ccYMinSlider_.setValue(getP("cc_y_min", 0), juce::dontSendNotification);
     ccYMaxSlider_.setValue(getP("cc_y_max", 127), juce::dontSendNotification);
 
+    // CV output
+    cvEnableToggle_.setToggleState(getPBool("cv_enabled", false), juce::dontSendNotification);
+    cvChannelSlider_.setValue(getP("cv_channel", 0), juce::dontSendNotification);
+
     // Visual style
     auto vstyle = visualStyleFromString(shape->visualStyle);
     switch (vstyle) {
@@ -560,7 +591,7 @@ void PropertyPanel::buttonClicked(juce::Button* button)
         ccYSlider_.setRange(0, maxCC, 1.0);
     }
 
-    if (button == &pitchQuantizeToggle_)
+    if (button == &pitchQuantizeToggle_ || button == &cvEnableToggle_)
         updateVisibility();
 
     writeParamsToShape();
@@ -643,6 +674,15 @@ void PropertyPanel::updateVisibility()
     ccYMaxSlider_.setVisible(showCCXYRange);
 
     bool hasShape = (currentShape_ != nullptr);
+
+    // CV controls: always visible when shape selected
+    cvLabel_.setVisible(hasShape);
+    cvEnableLabel_.setVisible(hasShape);
+    cvEnableToggle_.setVisible(hasShape);
+    bool showCVCh = hasShape && cvEnableToggle_.getToggleState();
+    cvChannelLabel_.setVisible(showCVCh);
+    cvChannelSlider_.setVisible(showCVCh);
+
     visualLabel_.setVisible(hasShape);
     visualBox_.setVisible(hasShape);
 
@@ -727,6 +767,10 @@ void PropertyPanel::writeParamsToShape()
             break;
         }
     }
+
+    // CV output (all behaviors)
+    obj->setProperty("cv_enabled", cvEnableToggle_.getToggleState());
+    obj->setProperty("cv_channel", (int)cvChannelSlider_.getValue());
 
     currentShape_->behaviorParams = juce::var(obj);
 

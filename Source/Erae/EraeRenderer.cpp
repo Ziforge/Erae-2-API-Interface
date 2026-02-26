@@ -1,6 +1,8 @@
 #include "EraeRenderer.h"
 #include "../PluginProcessor.h"
+#include "../Rendering/FingerPalette.h"
 #include <cstring>
+#include <algorithm>
 
 namespace erae {
 
@@ -81,6 +83,47 @@ void EraeRenderer::timerCallback()
                         fb[py][px][2] = b;
                     }
                 }
+            }
+        }
+
+        // DAW feedback: brighten highlighted shape pixels on hardware
+        if (processor_ && processor_->getDawFeedback().isEnabled()) {
+            auto highlighted = processor_->getDawFeedback().getHighlightedShapes();
+            for (auto& shape : layout_.shapes()) {
+                if (highlighted.count(shape->id)) {
+                    auto pixels = shape->gridPixels();
+                    for (auto& [px, py] : pixels) {
+                        if (px >= 0 && px < W && py >= 0 && py < H) {
+                            fb[py][px][0] = (uint8_t)std::min(127, (int)fb[py][px][0] + 40);
+                            fb[py][px][1] = (uint8_t)std::min(127, (int)fb[py][px][1] + 30);
+                            fb[py][px][2] = (uint8_t)std::min(127, (int)fb[py][px][2] + 5);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Per-finger colored dots on hardware surface
+        if (processor_) {
+            auto fingers = processor_->getActiveFingers();
+            int fingerNum = 0;
+            for (auto& [fid, fi] : fingers) {
+                Color7 color = processor_->getPerFingerColors()
+                    ? FingerPalette::colorForFinger(fingerNum)
+                    : Color7{127, 127, 127};
+                int gx = (int)std::round(fi.x);
+                int gy = (int)std::round(fi.y);
+                for (int dy = -1; dy <= 1; ++dy) {
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        int px = gx + dx, py = gy + dy;
+                        if (px >= 0 && px < W && py >= 0 && py < H) {
+                            fb[py][px][0] = (uint8_t)color.r;
+                            fb[py][px][1] = (uint8_t)color.g;
+                            fb[py][px][2] = (uint8_t)color.b;
+                        }
+                    }
+                }
+                ++fingerNum;
             }
         }
 

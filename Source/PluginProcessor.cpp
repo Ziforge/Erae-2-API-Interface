@@ -6,13 +6,13 @@ namespace erae {
 
 EraeProcessor::EraeProcessor()
     : AudioProcessor(BusesProperties()
-          .withInput("Input",  juce::AudioChannelSet::stereo(), true)
           .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       behaviorEngine_(midiOut_, mpeAllocator_),
       renderer_(multiLayout_.currentPage(), connection_)
 {
     renderer_.setProcessor(this);
     behaviorEngine_.setOscOutput(&oscOutput_);
+    behaviorEngine_.setCVOutput(&cvOutput_);
 
     // Load default drum pads layout
     multiLayout_.currentPage().setShapes(Preset::drumPads());
@@ -38,15 +38,26 @@ EraeProcessor::~EraeProcessor()
 void EraeProcessor::prepareToPlay(double, int) {}
 void EraeProcessor::releaseResources() {}
 
+bool EraeProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
+{
+    int numOut = layouts.getMainOutputChannelSet().size();
+    return numOut >= 2 && numOut <= 34; // 2 main + up to 32 CV
+}
+
 void EraeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
-    juce::ignoreUnused(buffer);
+    // Clear audio buffer (silence main channels)
+    buffer.clear();
 
     // Process incoming MIDI from DAW for feedback highlighting
     dawFeedback_.processIncomingMidi(midiMessages);
 
     // Drain generated MIDI (from touch → behavior engine) into the output
     midiOut_.drainInto(midiMessages, buffer.getNumSamples());
+
+    // Write CV output to audio channels 2+ (if available)
+    if (buffer.getNumChannels() > 2)
+        cvOutput_.writeToBuffer(buffer, 2, buffer.getNumSamples());
 }
 
 juce::AudioProcessorEditor* EraeProcessor::createEditor()
@@ -56,7 +67,12 @@ juce::AudioProcessorEditor* EraeProcessor::createEditor()
 
 void EraeProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
-    auto json = juce::JSON::toString(multiLayout_.toVar());
+    auto* root = new juce::DynamicObject();
+    root->setProperty("layout", multiLayout_.toVar());
+    root->setProperty("per_finger_colors", perFingerColors_);
+    root->setProperty("daw_feedback", dawFeedback_.isEnabled());
+    root->setProperty("osc", oscOutput_.toVar());
+    auto json = juce::JSON::toString(juce::var(root));
     destData.append(json.toRawUTF8(), json.getNumBytesAsUTF8());
 }
 
@@ -64,9 +80,23 @@ void EraeProcessor::setStateInformation(const void* data, int sizeInBytes)
 {
     auto json = juce::String::fromUTF8(static_cast<const char*>(data), sizeInBytes);
     auto parsed = juce::JSON::parse(json);
-    if (parsed.isObject()) {
+    if (!parsed.isObject()) return;
+
+    auto* obj = parsed.getDynamicObject();
+    if (!obj) return;
+
+    if (obj->hasProperty("layout")) {
+        // New format with settings
+        multiLayout_.fromVar(obj->getProperty("layout"));
+        perFingerColors_ = (bool)parsed.getProperty("per_finger_colors", true);
+        dawFeedback_.setEnabled((bool)parsed.getProperty("daw_feedback", false));
+        oscOutput_.fromVar(parsed.getProperty("osc", {}));
+    } else {
+        // Old format — layout directly (v1/v2 without settings wrapper)
         multiLayout_.fromVar(parsed);
     }
+
+    dawFeedback_.updateFromLayout(multiLayout_.currentPage());
 }
 
 void EraeProcessor::fingerEvent(const FingerEvent& event)

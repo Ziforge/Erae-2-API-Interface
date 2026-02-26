@@ -5,6 +5,7 @@
 #include "VelocityCurve.h"
 #include "ScaleQuantizer.h"
 #include "OscOutput.h"
+#include "CVOutput.h"
 #include "../Model/Shape.h"
 #include "../Model/Behavior.h"
 #include "../Erae/FingerStream.h"
@@ -16,6 +17,7 @@ class BehaviorEngine {
 public:
     BehaviorEngine(EraeMidiOut& midi, MPEAllocator& mpe);
     void setOscOutput(OscOutput* osc) { oscOut_ = osc; }
+    void setCVOutput(CVOutput* cv) { cvOut_ = cv; }
 
     void handle(const FingerEvent& event, Shape* shape);
     void allNotesOff();
@@ -46,6 +48,7 @@ private:
     EraeMidiOut& midi_;
     MPEAllocator& mpe_;
     OscOutput* oscOut_ = nullptr;
+    CVOutput* cvOut_ = nullptr;
     std::map<uint64_t, FingerState> activeFingers_;
 
     // Latch state: shapeId -> true if currently latched on

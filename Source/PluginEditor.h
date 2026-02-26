@@ -72,6 +72,8 @@ private:
     juce::Label pageLabel_           {"", "Page 1/1"};
     juce::TextButton pageNextButton_ {">"};
     juce::TextButton pageAddButton_  {"+"};
+    juce::TextButton pageDelButton_  {"-"};
+    juce::TextButton pageDupButton_  {"Dup"};
 
     // Toolbar — Erae connection
     juce::TextButton connectButton_ {"Connect"};
@@ -79,6 +81,14 @@ private:
     // Toolbar — Phase 5 toggles
     juce::ToggleButton fingerColorsToggle_ {"Colors"};
     juce::ToggleButton dawFeedbackToggle_  {"DAW FB"};
+
+    // OSC settings (sidebar)
+    juce::Label oscLabel_          {"", "OSC OUTPUT"};
+    juce::ToggleButton oscToggle_  {"Enable"};
+    juce::Label oscHostLabel_      {"", "Host"};
+    juce::TextEditor oscHostEditor_;
+    juce::Label oscPortLabel_      {"", "Port"};
+    juce::Slider oscPortSlider_;
 
     // Clipboard
     Clipboard clipboard_;

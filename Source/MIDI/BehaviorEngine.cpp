@@ -102,6 +102,8 @@ void BehaviorEngine::handleTrigger(const FingerEvent& event, Shape* shape, Finge
     int channel = getParam(*shape, "channel", 0);
     auto velCurve = curveFromString(getParamString(*shape, "velocity_curve", "linear"));
     bool latch = getParamBool(*shape, "latch", false);
+    int cvCh = getParam(*shape, "cv_channel", -1);
+    bool cvEnabled = getParamBool(*shape, "cv_enabled", false);
 
     if (latch) {
         if (event.action == SysEx::ACTION_DOWN) {
@@ -109,12 +111,18 @@ void BehaviorEngine::handleTrigger(const FingerEvent& event, Shape* shape, Finge
             if (latched) {
                 midi_.noteOff(channel, note);
                 if (oscOut_) oscOut_->noteOff(channel, note);
+                if (cvOut_ && cvEnabled && cvCh >= 0)
+                    cvOut_->set(cvCh, 0.0f); // gate off
                 latched = false;
             } else {
                 int vel = getParam(*shape, "velocity", -1);
                 if (vel < 0) vel = zToVelocity(fs.z, velCurve);
                 midi_.noteOn(channel, note, vel);
                 if (oscOut_) oscOut_->noteOn(channel, note, vel);
+                if (cvOut_ && cvEnabled && cvCh >= 0) {
+                    cvOut_->set(cvCh, 1.0f); // gate on
+                    cvOut_->set(cvCh + 1, CVOutput::noteToPitch(note));
+                }
                 latched = true;
             }
         }
@@ -124,9 +132,15 @@ void BehaviorEngine::handleTrigger(const FingerEvent& event, Shape* shape, Finge
             if (vel < 0) vel = zToVelocity(fs.z, velCurve);
             midi_.noteOn(channel, note, vel);
             if (oscOut_) oscOut_->noteOn(channel, note, vel);
+            if (cvOut_ && cvEnabled && cvCh >= 0) {
+                cvOut_->set(cvCh, 1.0f);
+                cvOut_->set(cvCh + 1, CVOutput::noteToPitch(note));
+            }
         } else if (event.action == SysEx::ACTION_UP) {
             midi_.noteOff(channel, note);
             if (oscOut_) oscOut_->noteOff(channel, note);
+            if (cvOut_ && cvEnabled && cvCh >= 0)
+                cvOut_->set(cvCh, 0.0f);
         }
     }
 }
@@ -137,13 +151,23 @@ void BehaviorEngine::handleMomentary(const FingerEvent& event, Shape* shape, Fin
     int channel = getParam(*shape, "channel", 0);
     auto velCurve = curveFromString(getParamString(*shape, "velocity_curve", "linear"));
     auto pressCurve = curveFromString(getParamString(*shape, "pressure_curve", "linear"));
+    int cvCh = getParam(*shape, "cv_channel", -1);
+    bool cvEnabled = getParamBool(*shape, "cv_enabled", false);
 
     if (event.action == SysEx::ACTION_DOWN) {
         midi_.noteOn(channel, note, zToVelocity(fs.z, velCurve));
+        if (cvOut_ && cvEnabled && cvCh >= 0) {
+            cvOut_->set(cvCh, 1.0f); // gate
+            cvOut_->set(cvCh + 1, CVOutput::noteToPitch(note)); // pitch
+        }
     } else if (event.action == SysEx::ACTION_MOVE) {
         midi_.pressure(channel, zToPressure(fs.z, pressCurve));
+        if (cvOut_ && cvEnabled && cvCh >= 0)
+            cvOut_->set(cvCh + 2, applyCurve(fs.z, pressCurve)); // pressure CV
     } else if (event.action == SysEx::ACTION_UP) {
         midi_.noteOff(channel, note);
+        if (cvOut_ && cvEnabled && cvCh >= 0)
+            cvOut_->set(cvCh, 0.0f); // gate off
     }
 }
 
@@ -158,6 +182,8 @@ void BehaviorEngine::handleNotePad(const FingerEvent& event, Shape* shape, Finge
     bool pitchQuantize = getParamBool(*shape, "pitch_quantize", false);
     float glideAmount = getParamFloat(*shape, "glide_amount", 0.0f);
     int pbRange = getParam(*shape, "pitchbend_range", 2);
+    int cvCh = getParam(*shape, "cv_channel", -1);
+    bool cvEnabled = getParamBool(*shape, "cv_enabled", false);
 
     if (event.action == SysEx::ACTION_DOWN) {
         int ch = mpe_.allocate(fs.fingerId);
@@ -165,6 +191,12 @@ void BehaviorEngine::handleNotePad(const FingerEvent& event, Shape* shape, Finge
         auto [nx, ny] = normalizeInShape(fs.x, fs.y, *shape);
         midi_.cc(ch, slideCC, (int)(ny * 127.0f));
         midi_.noteOn(ch, note, zToVelocity(fs.z, velCurve));
+        if (cvOut_ && cvEnabled && cvCh >= 0) {
+            cvOut_->set(cvCh, 1.0f);     // gate
+            cvOut_->set(cvCh + 1, CVOutput::noteToPitch(note)); // pitch
+            cvOut_->set(cvCh + 2, applyCurve(fs.z, pressCurve)); // pressure
+            cvOut_->set(cvCh + 3, ny);   // slide Y
+        }
     } else if (event.action == SysEx::ACTION_MOVE) {
         int ch = mpe_.getChannel(fs.fingerId);
         if (ch < 0) return;
@@ -172,14 +204,13 @@ void BehaviorEngine::handleNotePad(const FingerEvent& event, Shape* shape, Finge
         // Pitch bend from X-slide
         auto b = shape->bbox();
         float shapeW = b.xMax - b.xMin;
+        int pb = 8192;
         if (shapeW > 0) {
             float dxNorm = (fs.x - fs.startX) / shapeW;
-            int pb = juce::jlimit(0, 16383, (int)(8192 + dxNorm * 8191.0f));
+            pb = juce::jlimit(0, 16383, (int)(8192 + dxNorm * 8191.0f));
 
-            // Apply scale quantization to pitch bend if enabled
-            if (pitchQuantize && scaleType != ScaleType::Chromatic) {
+            if (pitchQuantize && scaleType != ScaleType::Chromatic)
                 pb = quantizePitchBend(pb, note, rootNote, scaleType, pbRange, glideAmount);
-            }
 
             midi_.pitchBend(ch, pb);
         }
@@ -189,12 +220,20 @@ void BehaviorEngine::handleNotePad(const FingerEvent& event, Shape* shape, Finge
         midi_.cc(ch, slideCC, (int)(ny * 127.0f));
         // Pressure (Z)
         midi_.pressure(ch, zToPressure(fs.z, pressCurve));
+
+        if (cvOut_ && cvEnabled && cvCh >= 0) {
+            cvOut_->set(cvCh + 1, CVOutput::pitchBendToPitch(note, pb, pbRange));
+            cvOut_->set(cvCh + 2, applyCurve(fs.z, pressCurve));
+            cvOut_->set(cvCh + 3, ny);
+        }
     } else if (event.action == SysEx::ACTION_UP) {
         int ch = mpe_.getChannel(fs.fingerId);
         if (ch >= 0) {
             midi_.noteOff(ch, note);
             mpe_.release(fs.fingerId);
         }
+        if (cvOut_ && cvEnabled && cvCh >= 0)
+            cvOut_->set(cvCh, 0.0f); // gate off
     }
 }
 
@@ -208,6 +247,8 @@ void BehaviorEngine::handleXY(const FingerEvent& event, Shape* shape, FingerStat
     int ccXMax = getParam(*shape, "cc_x_max", highres ? 16383 : 127);
     int ccYMin = getParam(*shape, "cc_y_min", 0);
     int ccYMax = getParam(*shape, "cc_y_max", highres ? 16383 : 127);
+    int cvCh = getParam(*shape, "cv_channel", -1);
+    bool cvEnabled = getParamBool(*shape, "cv_enabled", false);
 
     if (event.action == SysEx::ACTION_DOWN || event.action == SysEx::ACTION_MOVE) {
         auto [nx, ny] = normalizeInShape(fs.x, fs.y, *shape);
@@ -222,6 +263,10 @@ void BehaviorEngine::handleXY(const FingerEvent& event, Shape* shape, FingerStat
             midi_.cc(channel, ccX, juce::jlimit(0, 127, valX));
             midi_.cc(channel, ccY, juce::jlimit(0, 127, valY));
         }
+        if (cvOut_ && cvEnabled && cvCh >= 0) {
+            cvOut_->set(cvCh, nx);     // X value 0..1
+            cvOut_->set(cvCh + 1, ny); // Y value 0..1
+        }
     }
 }
 
@@ -233,6 +278,8 @@ void BehaviorEngine::handleFader(const FingerEvent& event, Shape* shape, FingerS
     bool highres = getParamBool(*shape, "highres", false);
     int ccMin = getParam(*shape, "cc_min", 0);
     int ccMax = getParam(*shape, "cc_max", highres ? 16383 : 127);
+    int cvCh = getParam(*shape, "cv_channel", -1);
+    bool cvEnabled = getParamBool(*shape, "cv_enabled", false);
 
     if (event.action == SysEx::ACTION_DOWN || event.action == SysEx::ACTION_MOVE) {
         auto [nx, ny] = normalizeInShape(fs.x, fs.y, *shape);
@@ -244,6 +291,8 @@ void BehaviorEngine::handleFader(const FingerEvent& event, Shape* shape, FingerS
             int val = ccMin + (int)(value * (float)(ccMax - ccMin));
             midi_.cc(channel, ccNum, juce::jlimit(0, 127, val));
         }
+        if (cvOut_ && cvEnabled && cvCh >= 0)
+            cvOut_->set(cvCh, value); // 0..1 continuous
     }
 }
 
@@ -270,6 +319,9 @@ void BehaviorEngine::allNotesOff()
 
     // Clear all latched notes
     latchedShapes_.clear();
+
+    // Clear all CV outputs
+    if (cvOut_) cvOut_->clear();
 }
 
 } // namespace erae

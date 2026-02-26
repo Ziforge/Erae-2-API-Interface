@@ -20,6 +20,7 @@ A JUCE-based visual layout editor and MIDI controller for the **Erae Touch II** 
 - **Per-Finger Colors** - Each finger gets a distinct color (10-color palette) on both the screen overlay and hardware surface
 - **DAW Feedback** - Incoming MIDI note-on/off from the DAW highlights the corresponding shapes with a pulsing glow, so pads light up during playback
 - **Preset Library** - Built-in presets (Drum Pads, Piano, Wicki-Hayden, Fader Bank, XY Pad, Buchla Thunder) plus save/load of custom layouts as JSON
+- **CV Output** - Each shape can optionally output CV signals on audio channels (1V/oct pitch, gate, pressure, slide). Designed for bridging to modular synths via DC-coupled audio interfaces or FPGA USB audio (120-channel Zybo modular)
 - **Runs as Standalone or VST3** - Use it as a standalone app or load it in your DAW
 
 ## Shape Types
@@ -98,6 +99,24 @@ When enabled, all MIDI output is mirrored as OSC messages over UDP (configurable
 | `/erae/pressure` | channel, value |
 | `/erae/pitchbend` | channel, value |
 | `/erae/finger` | fingerId, x, y, z, shapeId |
+
+## CV Output
+
+Any shape can optionally output CV (control voltage) signals on the plugin's audio output channels. Enable CV per-shape in the property panel, then set the base CV channel number. The plugin outputs audio-rate constant values suitable for DC-coupled audio interfaces or USB audio bridges to modular synths.
+
+Audio channel layout: channels 0-1 are silence (stereo main), channels 2+ carry CV signals. Resize the plugin's output bus in your DAW to access CV channels (up to 34 total = 2 main + 32 CV).
+
+**CV channel mapping per behavior type:**
+
+| Behavior | Base+0 | Base+1 | Base+2 | Base+3 |
+|---|---|---|---|---|
+| Trigger | Gate (0/1) | Pitch (V/oct) | — | — |
+| Momentary | Gate (0/1) | Pitch (V/oct) | Pressure (0-1) | — |
+| NotePad (MPE) | Gate (0/1) | Pitch (V/oct) | Pressure (0-1) | Slide Y (0-1) |
+| XY Controller | X (0-1) | Y (0-1) | — | — |
+| Fader | Value (0-1) | — | — | — |
+
+**1V/oct standard:** MIDI note 0 = 0.0V, note 12 = 1.0V, note 60 = 5.0V. Pitch bend is reflected in real-time for NotePad MPE mode.
 
 ## File Format
 

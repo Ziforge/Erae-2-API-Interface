@@ -11,6 +11,7 @@
 #include "MIDI/BehaviorEngine.h"
 #include "MIDI/OscOutput.h"
 #include "MIDI/DawFeedback.h"
+#include "MIDI/CVOutput.h"
 #include "Rendering/WidgetRenderer.h"
 #include <map>
 
@@ -33,7 +34,7 @@ public:
     const juce::String getName() const override { return "Erae Shape Editor"; }
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return true; }
-    bool isMidiEffect() const override { return true; }
+    bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 0; }
 
     int getNumPrograms() override { return 1; }
@@ -52,9 +53,12 @@ public:
     EraeRenderer& getRenderer() { return renderer_; }
     OscOutput& getOscOutput() { return oscOutput_; }
     DawFeedback& getDawFeedback() { return dawFeedback_; }
+    CVOutput& getCVOutput() { return cvOutput_; }
 
     bool getPerFingerColors() const { return perFingerColors_; }
     void setPerFingerColors(bool en) { perFingerColors_ = en; }
+
+    bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
 
     // EraeConnection::Listener
     void fingerEvent(const FingerEvent& event) override;
@@ -76,6 +80,7 @@ private:
     BehaviorEngine behaviorEngine_;
     OscOutput oscOutput_;
     DawFeedback dawFeedback_;
+    CVOutput cvOutput_;
     EraeRenderer renderer_;
 
     bool perFingerColors_ = true;
