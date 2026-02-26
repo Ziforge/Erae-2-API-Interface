@@ -19,7 +19,7 @@ A JUCE-based visual layout editor and MIDI controller for the **Erae Touch II** 
 - **OSC Output** - Mirror all MIDI output as OSC messages over UDP for integration with TouchDesigner, Max/MSP, SuperCollider, etc.
 - **Per-Finger Colors** - Each finger gets a distinct color (10-color palette) on both the screen overlay and hardware surface
 - **DAW Feedback** - Incoming MIDI note-on/off from the DAW highlights the corresponding shapes with a pulsing glow, so pads light up during playback
-- **Preset Library** - Built-in presets (Drum Pads, Piano, Wicki-Hayden, Fader Bank, XY Pad, Buchla Thunder) plus save/load of custom layouts as JSON
+- **Preset Library** - Built-in presets (Drum Pads, Piano, Wicki-Hayden, Fader Bank, XY Pad, Buchla Thunder, Auto Harp) plus save/load of custom layouts as JSON
 - **Shape Library** - Save any shape to a persistent reusable library. Browse saved shapes, place them on the canvas, flip horizontally/vertically. Library persists across sessions as JSON
 - **CV Output** - Each shape can optionally output CV signals on audio channels (1V/oct pitch, gate, pressure, slide). Designed for bridging to modular synths via DC-coupled audio interfaces or FPGA USB audio (120-channel Zybo modular)
 - **Tabbed Sidebar** - Right sidebar organized into 4 tabs: **Shape** (color picker, visual style, alignment, morph), **MIDI** (behavior, note/CC, learn, curves, scales), **Output** (CV per-shape, OSC global), **Library** (browse, save, place, flip). Selection info stays visible at the bottom across all tabs
@@ -126,6 +126,18 @@ Effect state can be routed to any modulation target:
 | Arrow keys | Nudge selected shapes (Shift = 5px) |
 | Scroll wheel | Zoom in/out |
 | Middle-click drag | Pan canvas |
+
+## Built-in Presets
+
+| Preset | Description |
+|--------|-------------|
+| **Drum Pads** | 4x4 MPC-style trigger grid, chromatic coloring, channel 9 |
+| **Piano** | 3-octave keyboard (white + black keys), MPE note pads |
+| **Wicki-Hayden** | Isomorphic hex layout, +2 semitones per column, +7 per row |
+| **Fader Bank** | 8 vertical CC faders with fill-bar visualization |
+| **XY Pad** | Full-surface XY controller with position-dot tracking |
+| **Buchla Thunder** | Recreation of the Buchla Thunder overlay (triggers, feathers, tail pads, hex palm pads) |
+| **Auto Harp** | Omnichord-style layout: 36 chord buttons (12 keys x Maj/Min/7th) on channels 0-2, plus 42 chromatic strum strings (C3-F6) on channel 3. Natural keys are brighter/wider, sharps are narrower/darker. Strum across the strings to trigger harp-like arpeggios |
 
 ## Building
 

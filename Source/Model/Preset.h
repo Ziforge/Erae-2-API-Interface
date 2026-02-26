@@ -25,6 +25,7 @@ namespace Preset {
                                                    int gridW = 42, int gridH = 24);
     std::vector<std::unique_ptr<Shape>> xyPad(int gridW = 42, int gridH = 24);
     std::vector<std::unique_ptr<Shape>> buchlaThunder(int gridW = 42, int gridH = 24);
+    std::vector<std::unique_ptr<Shape>> autoHarp(int gridW = 42, int gridH = 24);
 
     // Generator registry
     using GeneratorFn = std::function<std::vector<std::unique_ptr<Shape>>()>;

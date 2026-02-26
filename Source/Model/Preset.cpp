@@ -372,6 +372,88 @@ std::vector<std::unique_ptr<Shape>> buchlaThunder(int gridW, int gridH)
 }
 
 // ============================================================
+// auto_harp — Omnichord-style: chord buttons + strum strings
+//
+//   y  0-1:  Major chord buttons (12 keys, channel 0)
+//   y  2-3:  Minor chord buttons (12 keys, channel 1)
+//   y  4-5:  7th chord buttons   (12 keys, channel 2)
+//   y  6-23: 42 chromatic strum strings C3-F6 (channel 3)
+//
+// Natural notes (C,D,E,F,G,A,B) get 4-cell-wide buttons,
+// sharps (C#,D#,F#,G#,A#) get 3-cell-wide buttons. Total = 42.
+// ============================================================
+std::vector<std::unique_ptr<Shape>> autoHarp(int gridW, int gridH)
+{
+    std::vector<std::unique_ptr<Shape>> shapes;
+
+    // Note names for IDs
+    static const char* noteNames[] = {"C","Cs","D","Ds","E","F","Fs","G","Gs","A","As","B"};
+    // Natural notes are wider (4 cells), sharps are narrower (3 cells)
+    // C=4 C#=3 D=4 D#=3 E=4 F=3 F#=4 G=3 G#=4 A=3 A#=4 B=3 = 42
+    static const int buttonWidths[] = {4,3,4,3,4,3,4,3,4,3,4,3};
+
+    // Chord button colors: warm palette by root, shifted per type
+    // Major = saturated, Minor = desaturated/cool, 7th = warm/orange tint
+    struct ChordRow {
+        const char* suffix;
+        int channel;
+        float yTop;
+        float saturation;
+        float hueShift;
+    };
+    ChordRow rows[] = {
+        {"maj", 0, 0.0f, 0.85f, 0.0f},    // Major: vivid
+        {"min", 1, 2.0f, 0.65f, -20.0f},   // Minor: cooler
+        {"7",   2, 4.0f, 0.80f, 15.0f},    // 7th: warmer
+    };
+
+    float btnH = 2.0f;
+
+    for (auto& row : rows) {
+        float xPos = 0;
+        for (int i = 0; i < 12; ++i) {
+            int rootNote = 48 + i; // C3-B3 as chord roots
+            float w = (float)buttonWidths[i];
+            float hue = (float)(i * 30) + row.hueShift;
+            if (hue < 0) hue += 360.0f;
+
+            std::string id = std::string("chord_") + noteNames[i] + "_" + row.suffix;
+            auto s = makeRect(id, xPos, row.yTop, w, btnH,
+                hsvToRgb7(hue, row.saturation, 0.45f),
+                hsvToRgb7(hue, row.saturation, 1.0f),
+                "trigger", noteParams(rootNote, row.channel));
+            s->visualStyle = "pressure_glow";
+            shapes.push_back(std::move(s));
+            xPos += w;
+        }
+    }
+
+    // Strum strings: 42 strings from C3 (48) to F6 (89), each 1 cell wide
+    float strumTop = 6.0f;
+    float strumH = (float)gridH - strumTop; // 18 cells
+    int baseNote = 48; // C3
+
+    for (int i = 0; i < gridW; ++i) {
+        int note = baseNote + i; // C3=48 ... F6=89
+        if (note > 127) break;
+        int pc = note % 12; // pitch class
+        float hue = (float)(pc * 30);
+        bool isNatural = (pc == 0 || pc == 2 || pc == 4 || pc == 5 ||
+                          pc == 7 || pc == 9 || pc == 11);
+
+        std::string id = "strum_" + std::to_string(note);
+        auto s = makeRect(id, (float)i, strumTop, 1.0f, strumH,
+            hsvToRgb7(hue, isNatural ? 0.75f : 0.90f, isNatural ? 0.50f : 0.35f),
+            hsvToRgb7(hue, 0.85f, 1.0f),
+            "trigger", noteParams(note, 3));
+        s->visualStyle = "pressure_glow";
+        shapes.push_back(std::move(s));
+    }
+
+    return shapes;
+}
+
+// ============================================================
 // Generator registry
 // ============================================================
 const std::vector<GeneratorEntry>& getGenerators()
@@ -383,6 +465,7 @@ const std::vector<GeneratorEntry>& getGenerators()
         {"Fader Bank",     [] { return faderBank(); }},
         {"XY Pad",         [] { return xyPad(); }},
         {"Buchla Thunder", [] { return buchlaThunder(); }},
+        {"Auto Harp",      [] { return autoHarp(); }},
     };
     return generators;
 }
